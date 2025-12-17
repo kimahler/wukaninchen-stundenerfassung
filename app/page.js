@@ -2,22 +2,42 @@
 
 import { useState, useEffect } from 'react';
 
-const ABWEICHUNG_OPTIONEN = [
-  { value: "0", label: "Wie geplant", color: "bg-green-100 text-green-700 border-green-300" },
-  { value: "+0.5", label: "+30 min", color: "bg-blue-100 text-blue-700 border-blue-300" },
-  { value: "+1", label: "+1 Std", color: "bg-blue-100 text-blue-700 border-blue-300" },
-  { value: "+1.5", label: "+1,5 Std", color: "bg-blue-100 text-blue-700 border-blue-300" },
-  { value: "-0.5", label: "-30 min", color: "bg-amber-100 text-amber-700 border-amber-300" },
-  { value: "-1", label: "-1 Std", color: "bg-amber-100 text-amber-700 border-amber-300" },
-  { value: "-1.5", label: "-1,5 Std", color: "bg-amber-100 text-amber-700 border-amber-300" },
+// Status-Optionen für Abwesenheit (separate vom numerischen Stepper)
+const STATUS_OPTIONEN = [
   { value: "K", label: "Krank", color: "bg-red-100 text-red-700 border-red-300" },
   { value: "U", label: "Urlaub", color: "bg-purple-100 text-purple-700 border-purple-300" },
   { value: "KK", label: "Kind krank", color: "bg-pink-100 text-pink-700 border-pink-300" },
+  { value: "F", label: "Fortbildung", color: "bg-teal-100 text-teal-700 border-teal-300" },
 ];
 
-// Pausenabzug berechnen: Ab 6 Stunden = 0.5 Std Pause
-function berechnePausenabzug(istStunden) {
-  return istStunden >= 6 ? 0.5 : 0;
+// Bereich-Mapping für Anzeige
+const BEREICH_DISPLAY = {
+  'Ü3': 'Wald',
+  'Nest': 'Nest'
+};
+
+// Stepper Konfiguration
+const STEPPER_MIN = -3;
+const STEPPER_MAX = 3;
+const STEPPER_STEP = 0.25; // 15 Minuten
+
+// Format Stundenzahl für Anzeige
+function formatStunden(value) {
+  if (value === 0) return "Wie geplant";
+  const sign = value > 0 ? "+" : "";
+  const hours = Math.floor(Math.abs(value));
+  const mins = Math.round((Math.abs(value) - hours) * 60);
+  if (hours === 0) return `${sign}${mins} min`;
+  if (mins === 0) return `${sign}${hours} Std`;
+  return `${sign}${hours}:${String(mins).padStart(2, '0')} Std`;
+}
+
+// Pausenabzug berechnen
+// Erwachsene: Ab mehr als 6 Stunden = 0.5 Std Pause
+// Minderjährige: Ab mehr als 4.5 Stunden = 0.5 Std Pause (Jugendarbeitsschutzgesetz)
+function berechnePausenabzug(istStunden, isMinor = false) {
+  const grenze = isMinor ? 4.5 : 6;
+  return istStunden > grenze ? 0.5 : 0;
 }
 
 export default function Home() {
@@ -36,6 +56,23 @@ export default function Home() {
   const [selectedWeek, setSelectedWeek] = useState(0);
   const [selectedMitarbeiter, setSelectedMitarbeiter] = useState(null);
   const [showApprovalModal, setShowApprovalModal] = useState(false);
+
+  // PIN Authentication State
+  const [pendingUser, setPendingUser] = useState(null);
+  const [pinInput, setPinInput] = useState('');
+  const [pinError, setPinError] = useState(false);
+  const [pinResetLoading, setPinResetLoading] = useState(false);
+  const [pinResetSent, setPinResetSent] = useState(false);
+
+  // Zusatzzeiten (Prep/Office time)
+  const [zusatzzeiten, setZusatzzeiten] = useState({});
+  const [savedZusatzzeiten, setSavedZusatzzeiten] = useState({});
+
+  // Admin dashboard state
+  const [editingEmployee, setEditingEmployee] = useState(null);
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [adminSaving, setAdminSaving] = useState(false);
+  const [adminError, setAdminError] = useState(null);
 
   // Lade Dienstplan und gespeicherte Einträge beim Start
   useEffect(() => {
@@ -68,6 +105,9 @@ export default function Home() {
         setEintraege(localEintraege);
         setApprovals(eintraegeData.approvals || {});
         setSubmissions(eintraegeData.submissions || {});
+        // Load zusatzzeiten
+        setZusatzzeiten(eintraegeData.zusatzzeiten || {});
+        setSavedZusatzzeiten(eintraegeData.zusatzzeiten || {});
       }
 
       setError(null);
@@ -112,43 +152,48 @@ export default function Home() {
 
   // === LOGIN SCREEN ===
   if (ansicht === 'login') {
+    // Calculate previous month for status display
+    const now = new Date();
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonatKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+    const prevMonthName = prevMonth.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
+
+    // Check if any user has status for previous month (to decide whether to show legend)
+    const hasAnyStatus = dienstplan?.mitarbeiter?.some((ma) => {
+      const submissionKey = `${ma.name}-${prevMonatKey}`;
+      return submissions[submissionKey] || approvals[submissionKey];
+    });
+
     return (
       <div className="min-h-screen bg-gradient-to-br from-sky-100 via-white to-emerald-50 p-4">
         <div className="max-w-sm mx-auto pt-8">
-          <div className="text-center mb-8">
-            <div className="text-6xl mb-3">🐰</div>
+          <div className="text-center mb-6">
+            <div className="text-6xl mb-2">🐰</div>
             <h1 className="text-2xl font-bold text-gray-800">Wukaninchen</h1>
-            <p className="text-gray-500 text-sm">Stundenerfassung</p>
-            {dienstplan && (
-              <p className="text-xs text-gray-400 mt-1">
-                {dienstplan.monat} {dienstplan.jahr}
-              </p>
-            )}
           </div>
 
           <div className="bg-white/80 backdrop-blur rounded-2xl shadow-xl p-5">
-            <h2 className="text-base font-semibold mb-4 text-gray-700">Wer bist du?</h2>
             <div className="grid grid-cols-2 gap-2.5">
               {dienstplan?.mitarbeiter?.map((ma) => {
-                const now = new Date();
-                const monatKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
-                const submissionKey = `${ma.name}-${monatKey}`;
+                const submissionKey = `${ma.name}-${prevMonatKey}`;
                 const submission = submissions[submissionKey];
                 const approval = approvals[submissionKey];
 
                 let statusBadge = null;
                 if (approval?.status === 'genehmigt') {
-                  statusBadge = <span className="text-xs text-green-600">✓</span>;
+                  statusBadge = <span className="text-xs text-green-600 font-bold">✓</span>;
                 } else if (submission?.status === 'eingereicht') {
-                  statusBadge = <span className="text-xs text-blue-600">●</span>;
+                  statusBadge = <span className="text-xs text-amber-500 font-bold">◐</span>;
                 }
 
                 return (
                   <button
                     key={ma.name}
                     onClick={() => {
-                      setCurrentUser(ma);
-                      setAnsicht('erfassung');
+                      setPendingUser(ma);
+                      setPinInput('');
+                      setPinError(false);
+                      setAnsicht('pin');
                     }}
                     className="p-3 bg-gradient-to-br from-sky-50 to-blue-50 hover:from-sky-100 hover:to-blue-100 rounded-xl text-center transition-all active:scale-95 border border-sky-100 relative"
                   >
@@ -157,20 +202,182 @@ export default function Home() {
                     )}
                     <div className="text-xl mb-0.5">👤</div>
                     <div className="font-semibold text-gray-800 text-sm">{ma.name}</div>
-                    <div className="text-xs text-gray-400">{ma.bereich}</div>
+                    <div className="text-xs text-gray-400">{BEREICH_DISPLAY[ma.bereich] || ma.bereich}</div>
                   </button>
                 );
               })}
             </div>
 
-            <div className="mt-5 pt-4 border-t border-gray-100">
-              <button
-                onClick={() => setAnsicht('uebersicht')}
-                className="w-full p-3 bg-gray-50 hover:bg-gray-100 rounded-xl text-gray-600 font-medium transition-all flex items-center justify-center gap-2"
-              >
-                <span>📊</span> Übersicht (Leitung)
-              </button>
+            {/* Legend for status indicators */}
+            {hasAnyStatus && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <p className="text-xs text-gray-500 text-center mb-2">{prevMonthName}:</p>
+                <div className="flex justify-center gap-4 text-xs text-gray-500">
+                  <span><span className="text-green-600 font-bold">✓</span> Genehmigt</span>
+                  <span><span className="text-amber-500 font-bold">◐</span> Eingereicht</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // === PIN ENTRY SCREEN ===
+  if (ansicht === 'pin' && pendingUser) {
+    const validatePin = (enteredPin) => {
+      // Check if PIN matches user's PIN
+      return enteredPin === pendingUser.pin;
+    };
+
+    const handlePinDigit = (digit) => {
+      if (pinInput.length < 4) {
+        const newPin = pinInput + digit;
+        setPinInput(newPin);
+        setPinError(false);
+
+        // Auto-submit when 4 digits entered
+        if (newPin.length === 4) {
+          setTimeout(() => {
+            const isValid = validatePin(newPin);
+            if (isValid) {
+              setCurrentUser(pendingUser);
+              setPendingUser(null);
+              setPinInput('');
+              setPinResetSent(false);
+              setAnsicht('erfassung');
+            } else {
+              setPinError(true);
+              setPinInput('');
+            }
+          }, 100);
+        }
+      }
+    };
+
+    const handlePinBackspace = () => {
+      setPinInput(prev => prev.slice(0, -1));
+      setPinError(false);
+    };
+
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-sky-100 via-white to-emerald-50 p-4">
+        <div className="max-w-sm mx-auto pt-8">
+          <div className="text-center mb-6">
+            <div className="text-5xl mb-3">👤</div>
+            <h1 className="text-xl font-bold text-gray-800">Hallo {pendingUser.name}!</h1>
+            <p className="text-gray-500 text-sm mt-1">Bitte PIN eingeben</p>
+          </div>
+
+          <div className="bg-white/80 backdrop-blur rounded-2xl shadow-xl p-5">
+            {/* PIN Display */}
+            <div className="flex justify-center gap-3 mb-6">
+              {[0, 1, 2, 3].map((i) => (
+                <div
+                  key={i}
+                  className={`w-12 h-14 rounded-xl border-2 flex items-center justify-center text-2xl font-bold ${
+                    pinError
+                      ? 'border-red-300 bg-red-50'
+                      : pinInput[i]
+                      ? 'border-blue-400 bg-blue-50'
+                      : 'border-gray-200 bg-gray-50'
+                  }`}
+                >
+                  {pinInput[i] ? '●' : ''}
+                </div>
+              ))}
             </div>
+
+            {pinError && (
+              <p className="text-red-500 text-sm text-center mb-4">
+                Falsche PIN. Bitte erneut versuchen.
+              </p>
+            )}
+
+            {/* Numeric Keypad */}
+            <div className="grid grid-cols-3 gap-2">
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9].map((digit) => (
+                <button
+                  key={digit}
+                  onClick={() => handlePinDigit(String(digit))}
+                  className="p-4 text-xl font-semibold bg-gray-100 hover:bg-gray-200 rounded-xl transition-all active:scale-95"
+                >
+                  {digit}
+                </button>
+              ))}
+              <button
+                onClick={handlePinBackspace}
+                className="p-4 text-xl bg-gray-100 hover:bg-gray-200 rounded-xl transition-all active:scale-95"
+              >
+                ←
+              </button>
+              <button
+                onClick={() => handlePinDigit('0')}
+                className="p-4 text-xl font-semibold bg-gray-100 hover:bg-gray-200 rounded-xl transition-all active:scale-95"
+              >
+                0
+              </button>
+              <div className="p-4"></div>
+            </div>
+
+            {/* Back Button */}
+            <button
+              onClick={() => {
+                setPendingUser(null);
+                setPinInput('');
+                setPinError(false);
+                setPinResetSent(false);
+                setAnsicht('login');
+              }}
+              className="w-full mt-4 p-3 text-gray-500 hover:text-gray-700 text-sm transition-all"
+            >
+              ← Zurück zur Auswahl
+            </button>
+
+            {/* PIN Reset - nur für Leitung */}
+            {pendingUser.role === 'leitung' && (
+              <div className="mt-2 text-center">
+                {pinResetSent ? (
+                  <p className="text-sm text-green-600">
+                    Neue PIN wurde per E-Mail gesendet!
+                  </p>
+                ) : (
+                  <button
+                    onClick={async () => {
+                      if (pinResetLoading) return;
+                      setPinResetLoading(true);
+                      try {
+                        const response = await fetch('/api/reset-pin', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ name: pendingUser.name })
+                        });
+                        const result = await response.json();
+                        if (result.success) {
+                          setPinResetSent(true);
+                          // If in dev mode without email, show PIN directly
+                          if (result.pin) {
+                            alert(`Neue PIN: ${result.pin}\n\n(E-Mail-Versand nicht konfiguriert)`);
+                          }
+                        } else {
+                          alert(result.error || 'Fehler beim PIN-Reset');
+                        }
+                      } catch (error) {
+                        console.error('PIN reset error:', error);
+                        alert('Fehler beim PIN-Reset');
+                      } finally {
+                        setPinResetLoading(false);
+                      }
+                    }}
+                    disabled={pinResetLoading}
+                    className="text-sm text-blue-500 hover:text-blue-700 disabled:text-gray-400"
+                  >
+                    {pinResetLoading ? 'Sende...' : 'PIN vergessen?'}
+                  </button>
+                )}
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -210,19 +417,26 @@ export default function Home() {
         if (tag.sollStd > 0) {
           sollSumme += tag.sollStd;
           const eintrag = getEintrag(idx);
-          let tagesStd = tag.sollStd;
 
-          if (eintrag === "K" || eintrag === "U" || eintrag === "KK") {
-            // Bei Abwesenheit: Soll-Stunden zählen
-            tagesStd = tag.sollStd;
-          } else if (eintrag && eintrag !== "0") {
-            tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
+          // Prüfe ob Tag schon im Dienstplan als abwesend markiert ist
+          const istDienstplanAbwesend = ["K", "U", "KK", "F", "S", "KS"].includes(tag.status);
+
+          if (istDienstplanAbwesend) {
+            // Bei Abwesenheit lt. Dienstplan: Soll-Stunden = Ist-Stunden, keine Pause
+            istSumme += tag.sollStd;
+          } else if (["K", "U", "KK", "F"].includes(eintrag)) {
+            // Bei manuell eingetragener Abwesenheit: Soll-Stunden zählen, keine Pause
+            istSumme += tag.sollStd;
+          } else {
+            // Normaler Arbeitstag: Abweichung und Pause berechnen
+            let tagesStd = tag.sollStd;
+            if (eintrag && eintrag !== "0") {
+              tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
+            }
+            const pause = berechnePausenabzug(tagesStd, currentUser.isMinor);
+            pausenAbzug += pause;
+            istSumme += tagesStd - pause;
           }
-
-          // Pausenabzug berechnen
-          const pause = berechnePausenabzug(tagesStd);
-          pausenAbzug += pause;
-          istSumme += tagesStd - pause;
         }
       });
 
@@ -230,13 +444,21 @@ export default function Home() {
     };
 
     const hasUnsavedChanges = () => {
-      // Prüfen ob es ungespeicherte Änderungen gibt
+      // Prüfen ob es ungespeicherte Änderungen bei Einträgen gibt
       for (const key of Object.keys(eintraege)) {
         if (key.startsWith(currentUser.name + '-')) {
           if (eintraege[key] !== savedEintraege[key]) {
             return true;
           }
         }
+      }
+      // Prüfen ob es ungespeicherte Änderungen bei Zusatzzeiten gibt
+      const now = new Date();
+      const monatKey = `${currentUser.name}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+      const currentZusatz = zusatzzeiten[monatKey];
+      const savedZusatz = savedZusatzzeiten[monatKey];
+      if (JSON.stringify(currentZusatz) !== JSON.stringify(savedZusatz)) {
+        return true;
       }
       return false;
     };
@@ -254,12 +476,21 @@ export default function Home() {
           }
         });
 
+        // Zusatzzeiten für aktuellen Mitarbeiter sammeln
+        const mitarbeiterZusatzzeiten = {};
+        const now = new Date();
+        const monatKey = `${currentUser.name}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+        if (zusatzzeiten[monatKey]) {
+          mitarbeiterZusatzzeiten[monatKey] = zusatzzeiten[monatKey];
+        }
+
         const response = await fetch('/api/eintraege', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             mitarbeiter: currentUser.name,
-            eintraege: mitarbeiterEintraege
+            eintraege: mitarbeiterEintraege,
+            zusatzzeiten: mitarbeiterZusatzzeiten
           })
         });
 
@@ -271,13 +502,12 @@ export default function Home() {
 
         // Gespeicherte Einträge aktualisieren
         setSavedEintraege(prev => ({ ...prev, ...mitarbeiterEintraege }));
+        setSavedZusatzzeiten(prev => ({ ...prev, ...mitarbeiterZusatzzeiten }));
 
         // Submission-Status aktualisieren
-        const now = new Date();
-        const monatKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
         setSubmissions(prev => ({
           ...prev,
-          [`${currentUser.name}-${monatKey}`]: {
+          [`${currentUser.name}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`]: {
             status: 'eingereicht',
             timestamp: new Date().toISOString()
           }
@@ -322,7 +552,27 @@ export default function Home() {
                 {aktuelleWoche?.name || 'Woche'} • {aktuelleWoche?.zeitraum || ''}
               </div>
             </div>
-            <div className="w-8"></div>
+            <div className="flex gap-1">
+              {currentUser.role === 'leitung' && (
+                <>
+                  <button
+                    onClick={() => setAnsicht('uebersicht')}
+                    className="p-2 hover:bg-white/20 rounded-lg transition-all text-sm"
+                    title="Übersicht"
+                  >
+                    📊
+                  </button>
+                  <button
+                    onClick={() => setAnsicht('admin')}
+                    className="p-2 hover:bg-white/20 rounded-lg transition-all text-sm"
+                    title="Admin"
+                  >
+                    ⚙️
+                  </button>
+                </>
+              )}
+              {currentUser.role !== 'leitung' && <div className="w-8"></div>}
+            </div>
           </div>
         </div>
 
@@ -345,19 +595,128 @@ export default function Home() {
           </div>
         </div>
 
+        {/* Zusatzzeiten (Prep/Office Time) */}
+        {currentUser.canTrackPrepTime && (() => {
+          const now = new Date();
+          const monatKey = `${currentUser.name}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+
+          // Get current values from state
+          const currentZusatz = zusatzzeiten[monatKey] || {};
+          const vorbereitungTotal = (currentZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
+          const buerozeitTotal = (currentZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
+
+          const handleZusatzChange = (type, delta) => {
+            const today = new Date().toISOString().split('T')[0];
+            setZusatzzeiten(prev => {
+              const current = prev[monatKey] || {};
+              const entries = current[type] || [];
+
+              // Find existing entry for today
+              const todayIdx = entries.findIndex(e => e.datum === today);
+              let newEntries;
+
+              if (todayIdx >= 0) {
+                // Update existing entry
+                const newValue = Math.max(0, entries[todayIdx].stunden + delta);
+                if (newValue === 0) {
+                  // Remove entry if 0
+                  newEntries = entries.filter((_, i) => i !== todayIdx);
+                } else {
+                  newEntries = entries.map((e, i) =>
+                    i === todayIdx ? { ...e, stunden: newValue, timestamp: new Date().toISOString() } : e
+                  );
+                }
+              } else if (delta > 0) {
+                // Add new entry
+                newEntries = [...entries, { stunden: delta, datum: today, timestamp: new Date().toISOString() }];
+              } else {
+                newEntries = entries;
+              }
+
+              return {
+                ...prev,
+                [monatKey]: {
+                  ...current,
+                  [type]: newEntries
+                }
+              };
+            });
+          };
+
+          return (
+            <div className="bg-white border-b p-3 max-w-lg mx-auto">
+              <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
+                Zusatzzeiten diesen Monat
+              </div>
+
+              {/* Vor-/Nachbereitung */}
+              <div className="flex items-center justify-between py-2">
+                <div>
+                  <div className="text-sm font-medium text-gray-700">Vor-/Nachbereitung</div>
+                  <div className="text-xs text-gray-400">Gesamt: {vorbereitungTotal.toFixed(2)} Std</div>
+                </div>
+                <div className="flex items-center gap-1.5">
+                  <button
+                    onClick={() => handleZusatzChange('vorbereitung', -STEPPER_STEP)}
+                    className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
+                  >
+                    −
+                  </button>
+                  <div className="min-w-[70px] h-10 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-sm font-semibold text-emerald-700">
+                    {vorbereitungTotal.toFixed(2)}
+                  </div>
+                  <button
+                    onClick={() => handleZusatzChange('vorbereitung', STEPPER_STEP)}
+                    className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
+                  >
+                    +
+                  </button>
+                </div>
+              </div>
+
+              {/* Bürozeit - nur für Leitung */}
+              {currentUser.role === 'leitung' && (
+                <div className="flex items-center justify-between py-2 border-t border-gray-100">
+                  <div>
+                    <div className="text-sm font-medium text-gray-700">Bürozeit / Leitungszeit</div>
+                    <div className="text-xs text-gray-400">Gesamt: {buerozeitTotal.toFixed(2)} Std</div>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      onClick={() => handleZusatzChange('buerozeit', -STEPPER_STEP)}
+                      className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
+                    >
+                      −
+                    </button>
+                    <div className="min-w-[70px] h-10 rounded-lg bg-purple-50 border border-purple-200 flex items-center justify-center text-sm font-semibold text-purple-700">
+                      {buerozeitTotal.toFixed(2)}
+                    </div>
+                    <button
+                      onClick={() => handleZusatzChange('buerozeit', STEPPER_STEP)}
+                      className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
+                    >
+                      +
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })()}
+
         {/* Tages-Liste */}
         <div className="p-3 max-w-lg mx-auto space-y-2.5 pb-36">
           {maTage.map((tag, idx) => {
             const eintrag = getEintrag(idx);
-            const istAbwesend = tag.status === "K" || tag.status === "U";
+            const istAbwesend = ["K", "U", "KK", "KS", "F", "S"].includes(tag.status);
             const keinDienst = !tag.sollStd || tag.sollStd === 0;
 
             // Berechne Ist-Stunden für diesen Tag
             let tagesIst = tag.sollStd || 0;
-            if (eintrag && eintrag !== "0" && !["K", "U", "KK"].includes(eintrag)) {
+            if (eintrag && eintrag !== "0" && !["K", "U", "KK", "KS", "F", "S"].includes(eintrag)) {
               tagesIst = tag.sollStd + (parseFloat(eintrag) || 0);
             }
-            const tagesPause = berechnePausenabzug(tagesIst);
+            const tagesPause = berechnePausenabzug(tagesIst, currentUser.isMinor);
 
             return (
               <div
@@ -370,7 +729,7 @@ export default function Home() {
                   <div className="flex items-center justify-between">
                     <div>
                       <span className="font-bold text-gray-800">{tag.tag}</span>
-                      <span className="text-gray-400 ml-1.5">{tag.datum}</span>
+                      {tag.datum && <span className="text-gray-600 ml-1.5">{tag.datum}</span>}
                     </div>
                     <div className="flex items-center gap-2">
                       {eintrag && eintrag !== "0" && (
@@ -382,19 +741,36 @@ export default function Home() {
                           >
                             ✕
                           </button>
-                          <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
-                            ABWEICHUNG_OPTIONEN.find(o => o.value === eintrag)?.color || 'bg-gray-100'
-                          }`}>
-                            {ABWEICHUNG_OPTIONEN.find(o => o.value === eintrag)?.label || eintrag}
-                          </span>
+                          {(() => {
+                            const statusOption = STATUS_OPTIONEN.find(o => o.value === eintrag);
+                            if (statusOption) {
+                              return (
+                                <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${statusOption.color}`}>
+                                  {statusOption.label}
+                                </span>
+                              );
+                            }
+                            // Numeric deviation
+                            const numValue = parseFloat(eintrag);
+                            return (
+                              <span className={`px-2 py-0.5 rounded-full text-xs font-medium ${
+                                numValue > 0 ? 'bg-green-100 text-green-700' : 'bg-orange-100 text-orange-700'
+                              }`}>
+                                {formatStunden(numValue)}
+                              </span>
+                            );
+                          })()}
                         </>
                       )}
                     </div>
                   </div>
 
                   {istAbwesend ? (
-                    <div className="text-sm text-red-500 mt-1">
-                      {tag.status === "K" ? "Krank (lt. Dienstplan)" : "Urlaub"}
+                    <div className={`text-sm mt-1 ${tag.status === "K" ? "text-red-500" : tag.status === "F" || tag.status === "S" ? "text-teal-600" : "text-purple-500"}`}>
+                      {tag.status === "K" ? "Krank (lt. Dienstplan)" :
+                       tag.status === "U" ? "Urlaub (lt. Dienstplan)" :
+                       tag.status === "F" ? "Fortbildung (lt. Dienstplan)" :
+                       tag.status === "S" ? "Seminar (lt. Dienstplan)" : "Abwesend"}
                     </div>
                   ) : keinDienst ? (
                     <div className="text-sm text-gray-400 mt-1">— Kein Dienst geplant</div>
@@ -413,13 +789,58 @@ export default function Home() {
                 </div>
 
                 {!istAbwesend && !keinDienst && (
-                  <div className="p-2.5 bg-gray-50">
-                    <div className="flex flex-wrap gap-1.5">
-                      {ABWEICHUNG_OPTIONEN.map((option) => (
+                  <div className="p-2.5 bg-gray-50 space-y-2">
+                    {/* Stepper für Zeitabweichung */}
+                    <div className="flex items-center justify-center gap-2">
+                      <button
+                        onClick={() => {
+                          const currentValue = typeof eintrag === 'string' && !STATUS_OPTIONEN.find(o => o.value === eintrag)
+                            ? parseFloat(eintrag) || 0
+                            : 0;
+                          const newValue = Math.max(STEPPER_MIN, currentValue - STEPPER_STEP);
+                          handleAbweichung(idx, newValue.toString());
+                        }}
+                        className="w-12 h-12 rounded-xl bg-white border-2 border-gray-200 hover:border-gray-300 text-xl font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center"
+                      >
+                        −
+                      </button>
+                      <div
+                        className={`min-w-[120px] h-12 rounded-xl border-2 flex items-center justify-center font-semibold text-sm ${
+                          !eintrag || eintrag === "0" || STATUS_OPTIONEN.find(o => o.value === eintrag)
+                            ? 'bg-gray-100 border-gray-200 text-gray-500'
+                            : parseFloat(eintrag) > 0
+                            ? 'bg-green-50 border-green-300 text-green-700'
+                            : 'bg-orange-50 border-orange-300 text-orange-700'
+                        }`}
+                      >
+                        {(() => {
+                          if (!eintrag || STATUS_OPTIONEN.find(o => o.value === eintrag)) {
+                            return 'Wie geplant';
+                          }
+                          return formatStunden(parseFloat(eintrag) || 0);
+                        })()}
+                      </div>
+                      <button
+                        onClick={() => {
+                          const currentValue = typeof eintrag === 'string' && !STATUS_OPTIONEN.find(o => o.value === eintrag)
+                            ? parseFloat(eintrag) || 0
+                            : 0;
+                          const newValue = Math.min(STEPPER_MAX, currentValue + STEPPER_STEP);
+                          handleAbweichung(idx, newValue.toString());
+                        }}
+                        className="w-12 h-12 rounded-xl bg-white border-2 border-gray-200 hover:border-gray-300 text-xl font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center"
+                      >
+                        +
+                      </button>
+                    </div>
+
+                    {/* Status-Buttons */}
+                    <div className="flex flex-wrap justify-center gap-1.5">
+                      {STATUS_OPTIONEN.map((option) => (
                         <button
                           key={option.value}
                           onClick={() => handleAbweichung(idx, option.value)}
-                          className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
                             eintrag === option.value
                               ? option.color + ' ring-2 ring-offset-1 ring-blue-400'
                               : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
@@ -540,6 +961,10 @@ export default function Home() {
       let sollGesamt = 0;
       let istGesamt = 0;
 
+      // Get employee's isMinor flag from dienstplan
+      const maData = dienstplan?.mitarbeiter?.find(m => m.name === maName);
+      const isMinor = maData?.isMinor || false;
+
       wochen.forEach((woche, wochenIdx) => {
         const maTage = woche.tage?.[maName] || [];
         maTage.forEach((tag, tagIdx) => {
@@ -548,18 +973,36 @@ export default function Home() {
             const key = `${maName}-${wochenIdx}-${tagIdx}`;
             const eintrag = eintraege[key];
 
-            let tagesStd = tag.sollStd;
-            if (eintrag && eintrag !== "0" && !["K", "U", "KK"].includes(eintrag)) {
-              tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
-            }
+            // Prüfe ob Tag schon im Dienstplan als abwesend markiert ist
+            const istDienstplanAbwesend = ["K", "U", "KK", "F", "S", "KS"].includes(tag.status);
 
-            const pause = berechnePausenabzug(tagesStd);
-            istGesamt += tagesStd - pause;
+            if (istDienstplanAbwesend) {
+              // Bei Abwesenheit lt. Dienstplan: Soll-Stunden = Ist-Stunden, keine Pause
+              istGesamt += tag.sollStd;
+            } else if (["K", "U", "KK", "F"].includes(eintrag)) {
+              // Bei manuell eingetragener Abwesenheit: Soll-Stunden zählen, keine Pause
+              istGesamt += tag.sollStd;
+            } else {
+              // Normaler Arbeitstag: Abweichung und Pause berechnen
+              let tagesStd = tag.sollStd;
+              if (eintrag && eintrag !== "0") {
+                tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
+              }
+              const pause = berechnePausenabzug(tagesStd, isMinor);
+              istGesamt += tagesStd - pause;
+            }
           }
         });
       });
 
-      return { sollGesamt, istGesamt };
+      // Zusatzzeiten berechnen
+      const zusatzKey = `${maName}-${monatKey}`;
+      const maZusatz = zusatzzeiten[zusatzKey] || {};
+      const vorbereitungTotal = (maZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
+      const buerozeitTotal = (maZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
+      const zusatzTotal = vorbereitungTotal + buerozeitTotal;
+
+      return { sollGesamt, istGesamt, vorbereitungTotal, buerozeitTotal, zusatzTotal };
     };
 
     return (
@@ -567,7 +1010,7 @@ export default function Home() {
         <div className="bg-gradient-to-r from-gray-700 to-gray-600 text-white p-4 sticky top-0 z-20">
           <div className="flex items-center justify-between max-w-2xl mx-auto">
             <button
-              onClick={() => setAnsicht('login')}
+              onClick={() => setAnsicht('erfassung')}
               className="p-2 -ml-2 hover:bg-white/20 rounded-lg transition-all text-lg"
             >
               ←
@@ -594,13 +1037,14 @@ export default function Home() {
             <div className="divide-y">
               {dienstplan?.mitarbeiter?.map((ma) => {
                 const status = getStatus(ma.name);
-                const { sollGesamt, istGesamt } = berechneMitarbeiterStunden(ma.name);
+                const { sollGesamt, istGesamt, vorbereitungTotal, buerozeitTotal, zusatzTotal } = berechneMitarbeiterStunden(ma.name);
                 const hasSubmission = submissions[`${ma.name}-${monatKey}`];
+                const gesamtMitZusatz = istGesamt + zusatzTotal;
 
                 return (
                   <div
                     key={ma.name}
-                    className={`flex items-center justify-between p-3 ${hasSubmission ? 'cursor-pointer hover:bg-gray-50' : ''}`}
+                    className={`p-3 ${hasSubmission ? 'cursor-pointer hover:bg-gray-50' : ''}`}
                     onClick={() => {
                       if (hasSubmission) {
                         setSelectedMitarbeiter(ma);
@@ -608,23 +1052,46 @@ export default function Home() {
                       }
                     }}
                   >
-                    <div>
-                      <div className="font-medium text-gray-800">{ma.name}</div>
-                      <div className="text-xs text-gray-400">{ma.bereich}</div>
-                    </div>
-                    <div className="text-right flex items-center gap-3">
+                    <div className="flex items-center justify-between">
                       <div>
-                        <div className="font-semibold text-gray-700">
-                          {istGesamt.toFixed(1)} / {sollGesamt.toFixed(1)} Std
-                        </div>
-                        <div className={`text-xs px-2 py-0.5 rounded ${status.color}`}>
-                          {status.text}
-                        </div>
+                        <div className="font-medium text-gray-800">{ma.name}</div>
+                        <div className="text-xs text-gray-400">{BEREICH_DISPLAY[ma.bereich] || ma.bereich}</div>
                       </div>
-                      {hasSubmission && (
-                        <span className="text-gray-400">›</span>
-                      )}
+                      <div className="text-right flex items-center gap-3">
+                        <div>
+                          <div className="font-semibold text-gray-700">
+                            {gesamtMitZusatz.toFixed(1)} / {sollGesamt.toFixed(1)} Std
+                          </div>
+                          <div className={`text-xs px-2 py-0.5 rounded ${status.color}`}>
+                            {status.text}
+                          </div>
+                        </div>
+                        {hasSubmission && (
+                          <span className="text-gray-400">›</span>
+                        )}
+                      </div>
                     </div>
+                    {/* Zusatzzeiten Details */}
+                    {zusatzTotal > 0 && (
+                      <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500">
+                        <div className="flex justify-between">
+                          <span>Arbeitszeit (ohne Zusatz):</span>
+                          <span>{istGesamt.toFixed(1)} Std</span>
+                        </div>
+                        {vorbereitungTotal > 0 && (
+                          <div className="flex justify-between text-emerald-600">
+                            <span>+ Vor-/Nachbereitung:</span>
+                            <span>{vorbereitungTotal.toFixed(2)} Std</span>
+                          </div>
+                        )}
+                        {buerozeitTotal > 0 && (
+                          <div className="flex justify-between text-purple-600">
+                            <span>+ Bürozeit:</span>
+                            <span>{buerozeitTotal.toFixed(2)} Std</span>
+                          </div>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -650,13 +1117,24 @@ export default function Home() {
                       const key = `${ma.name}-${wochenIdx}-${tagIdx}`;
                       const eintrag = eintraege[key];
 
-                      let tagesStd = tag.sollStd;
-                      if (eintrag && eintrag !== "0" && !["K", "U", "KK"].includes(eintrag)) {
-                        tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
-                      }
+                      // Prüfe ob Tag schon im Dienstplan als abwesend markiert ist
+                      const istDienstplanAbwesend = ["K", "U", "KK", "F", "S", "KS"].includes(tag.status);
 
-                      const pause = berechnePausenabzug(tagesStd);
-                      wochenIst += tagesStd - pause;
+                      if (istDienstplanAbwesend) {
+                        // Bei Abwesenheit lt. Dienstplan: Soll-Stunden = Ist-Stunden, keine Pause
+                        wochenIst += tag.sollStd;
+                      } else if (["K", "U", "KK", "F"].includes(eintrag)) {
+                        // Bei manuell eingetragener Abwesenheit: Soll-Stunden zählen, keine Pause
+                        wochenIst += tag.sollStd;
+                      } else {
+                        // Normaler Arbeitstag: Abweichung und Pause berechnen
+                        let tagesStd = tag.sollStd;
+                        if (eintrag && eintrag !== "0") {
+                          tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
+                        }
+                        const pause = berechnePausenabzug(tagesStd, ma.isMinor);
+                        wochenIst += tagesStd - pause;
+                      }
                     }
                   });
 
@@ -664,7 +1142,7 @@ export default function Home() {
                     <div key={ma.name} className="flex items-center justify-between p-3">
                       <div>
                         <div className="font-medium text-gray-800">{ma.name}</div>
-                        <div className="text-xs text-gray-400">{ma.bereich}</div>
+                        <div className="text-xs text-gray-400">{BEREICH_DISPLAY[ma.bereich] || ma.bereich}</div>
                       </div>
                       <div className="text-right">
                         <div className="font-semibold text-gray-700">
@@ -714,6 +1192,332 @@ export default function Home() {
               >
                 Abbrechen
               </button>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // === ADMIN DASHBOARD ===
+  if (ansicht === 'admin' && currentUser?.role === 'leitung') {
+    const handleSaveEmployee = async (employee, updates) => {
+      try {
+        setAdminSaving(true);
+        setAdminError(null);
+
+        const response = await fetch('/api/mitarbeiter', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: employee.name, updates })
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Speichern fehlgeschlagen');
+        }
+
+        // Reload data
+        await loadData();
+        setEditingEmployee(null);
+      } catch (error) {
+        setAdminError(error.message);
+      } finally {
+        setAdminSaving(false);
+      }
+    };
+
+    const handleAddEmployee = async (newEmployee) => {
+      try {
+        setAdminSaving(true);
+        setAdminError(null);
+
+        const response = await fetch('/api/mitarbeiter', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(newEmployee)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.error || 'Hinzufügen fehlgeschlagen');
+        }
+
+        alert(`Mitarbeiter hinzugefügt!\nPIN: ${data.pin}\n\nBitte PIN notieren!`);
+        await loadData();
+        setShowAddModal(false);
+      } catch (error) {
+        setAdminError(error.message);
+      } finally {
+        setAdminSaving(false);
+      }
+    };
+
+    const handleDeleteEmployee = async (name) => {
+      if (!confirm(`${name} wirklich deaktivieren?`)) return;
+
+      try {
+        setAdminSaving(true);
+        const response = await fetch(`/api/mitarbeiter?name=${encodeURIComponent(name)}`, {
+          method: 'DELETE'
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || 'Löschen fehlgeschlagen');
+        }
+
+        await loadData();
+        setEditingEmployee(null);
+      } catch (error) {
+        setAdminError(error.message);
+      } finally {
+        setAdminSaving(false);
+      }
+    };
+
+    return (
+      <div className="min-h-screen bg-gray-100">
+        {/* Header */}
+        <div className="bg-gradient-to-r from-purple-600 to-purple-500 text-white p-4 sticky top-0 z-20">
+          <div className="flex items-center justify-between max-w-2xl mx-auto">
+            <button
+              onClick={() => setAnsicht('erfassung')}
+              className="p-2 -ml-2 hover:bg-white/20 rounded-lg transition-all text-lg"
+            >
+              ←
+            </button>
+            <div className="text-center">
+              <div className="font-bold">Admin-Bereich</div>
+              <div className="text-xs text-purple-200">Mitarbeiterverwaltung</div>
+            </div>
+            <div className="w-8"></div>
+          </div>
+        </div>
+
+        <div className="p-3 max-w-2xl mx-auto">
+          {adminError && (
+            <div className="mb-4 p-3 bg-red-100 text-red-700 rounded-xl text-sm">
+              {adminError}
+            </div>
+          )}
+
+          {/* Employee List */}
+          <div className="bg-white rounded-xl shadow-sm overflow-hidden mb-4">
+            <div className="bg-gray-50 p-3 font-semibold text-gray-700 border-b">
+              Mitarbeiter ({dienstplan?.mitarbeiter?.length || 0})
+            </div>
+            <div className="divide-y">
+              {dienstplan?.mitarbeiter?.map((ma) => (
+                <div
+                  key={ma.name}
+                  className="flex items-center justify-between p-3 hover:bg-gray-50 cursor-pointer"
+                  onClick={() => setEditingEmployee(ma)}
+                >
+                  <div>
+                    <div className="font-medium text-gray-800">{ma.name}</div>
+                    <div className="text-xs text-gray-400">
+                      {BEREICH_DISPLAY[ma.bereich] || ma.bereich} • PIN: {ma.pin || '****'}
+                    </div>
+                    <div className="text-xs text-gray-400">
+                      {ma.canTrackPrepTime ? 'Päd. Personal' : 'Freiwillig'}
+                      {ma.isMinor && ' • Minderjährig'}
+                      {ma.role === 'leitung' && ' • Leitung'}
+                    </div>
+                  </div>
+                  <span className="text-gray-400">›</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Add Employee Button */}
+          <button
+            onClick={() => setShowAddModal(true)}
+            className="w-full p-4 bg-purple-100 hover:bg-purple-200 text-purple-700 rounded-xl font-medium transition-all flex items-center justify-center gap-2"
+          >
+            <span>+</span> Neue/r Mitarbeiter/in
+          </button>
+        </div>
+
+        {/* Edit Employee Modal */}
+        {editingEmployee && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-5 max-h-[90vh] overflow-y-auto">
+              <h3 className="font-bold text-lg mb-4">{editingEmployee.name} bearbeiten</h3>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm text-gray-600 block mb-1">Bereich</label>
+                  <select
+                    defaultValue={editingEmployee.bereich}
+                    className="w-full p-3 border rounded-xl"
+                    id="edit-bereich"
+                  >
+                    <option value="Nest">Nest</option>
+                    <option value="Ü3">Ü3</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm text-gray-600 block mb-1">PIN</label>
+                  <input
+                    type="text"
+                    defaultValue={editingEmployee.pin}
+                    maxLength={4}
+                    pattern="[0-9]*"
+                    className="w-full p-3 border rounded-xl"
+                    id="edit-pin"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm text-gray-600 block mb-1">Standard-Stunden/Tag</label>
+                  <input
+                    type="number"
+                    step="0.25"
+                    defaultValue={editingEmployee.standardStunden}
+                    className="w-full p-3 border rounded-xl"
+                    id="edit-std"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      defaultChecked={editingEmployee.canTrackPrepTime}
+                      id="edit-prep"
+                      className="w-5 h-5"
+                    />
+                    <span className="text-sm">Pädagogisches Personal (Vor-/Nachbereitung)</span>
+                  </label>
+
+                  <label className="flex items-center gap-2">
+                    <input
+                      type="checkbox"
+                      defaultChecked={editingEmployee.isMinor}
+                      id="edit-minor"
+                      className="w-5 h-5"
+                    />
+                    <span className="text-sm">Minderjährig (Pause ab 4,5 Std)</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-6">
+                <button
+                  onClick={() => handleDeleteEmployee(editingEmployee.name)}
+                  disabled={adminSaving || editingEmployee.role === 'leitung'}
+                  className="p-3 bg-red-100 hover:bg-red-200 text-red-700 rounded-xl font-medium transition-all disabled:opacity-50"
+                >
+                  Löschen
+                </button>
+                <button
+                  onClick={() => setEditingEmployee(null)}
+                  className="flex-1 p-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-medium transition-all"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={() => {
+                    const updates = {
+                      bereich: document.getElementById('edit-bereich').value,
+                      pin: document.getElementById('edit-pin').value,
+                      standardStunden: parseFloat(document.getElementById('edit-std').value),
+                      canTrackPrepTime: document.getElementById('edit-prep').checked,
+                      isMinor: document.getElementById('edit-minor').checked
+                    };
+                    handleSaveEmployee(editingEmployee, updates);
+                  }}
+                  disabled={adminSaving}
+                  className="flex-1 p-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-all disabled:opacity-50"
+                >
+                  {adminSaving ? 'Speichern...' : 'Speichern'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Add Employee Modal */}
+        {showAddModal && (
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl max-w-sm w-full p-5">
+              <h3 className="font-bold text-lg mb-4">Neue/r Mitarbeiter/in</h3>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="text-sm text-gray-600 block mb-1">Name</label>
+                  <input
+                    type="text"
+                    className="w-full p-3 border rounded-xl"
+                    id="new-name"
+                    placeholder="Vorname"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-sm text-gray-600 block mb-1">Bereich</label>
+                  <select className="w-full p-3 border rounded-xl" id="new-bereich">
+                    <option value="Nest">Nest</option>
+                    <option value="Ü3">Ü3</option>
+                  </select>
+                </div>
+
+                <div>
+                  <label className="text-sm text-gray-600 block mb-1">Standard-Stunden/Tag</label>
+                  <input
+                    type="number"
+                    step="0.25"
+                    defaultValue="6"
+                    className="w-full p-3 border rounded-xl"
+                    id="new-std"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" defaultChecked id="new-prep" className="w-5 h-5" />
+                    <span className="text-sm">Pädagogisches Personal</span>
+                  </label>
+
+                  <label className="flex items-center gap-2">
+                    <input type="checkbox" id="new-minor" className="w-5 h-5" />
+                    <span className="text-sm">Minderjährig</span>
+                  </label>
+                </div>
+              </div>
+
+              <div className="flex gap-2 mt-6">
+                <button
+                  onClick={() => setShowAddModal(false)}
+                  className="flex-1 p-3 bg-gray-100 hover:bg-gray-200 text-gray-600 rounded-xl font-medium transition-all"
+                >
+                  Abbrechen
+                </button>
+                <button
+                  onClick={() => {
+                    const name = document.getElementById('new-name').value.trim();
+                    if (!name) {
+                      alert('Bitte Name eingeben');
+                      return;
+                    }
+                    handleAddEmployee({
+                      name,
+                      bereich: document.getElementById('new-bereich').value,
+                      standardStunden: parseFloat(document.getElementById('new-std').value),
+                      canTrackPrepTime: document.getElementById('new-prep').checked,
+                      isMinor: document.getElementById('new-minor').checked
+                    });
+                  }}
+                  disabled={adminSaving}
+                  className="flex-1 p-3 bg-purple-600 hover:bg-purple-700 text-white rounded-xl font-medium transition-all disabled:opacity-50"
+                >
+                  {adminSaving ? 'Hinzufügen...' : 'Hinzufügen'}
+                </button>
+              </div>
             </div>
           </div>
         )}
