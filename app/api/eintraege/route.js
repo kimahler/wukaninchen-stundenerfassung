@@ -9,8 +9,35 @@ const EINTRAEGE_PATH = process.env.DIENSTPLAN_PATH || '/03 Kinderbetreuung/Päda
 const AUSWERTUNGEN_PATH = EINTRAEGE_PATH + 'Auswertungen/';
 const STAMMDATEN_FILENAME = 'Mitarbeiter_Stammdaten.json';
 
+// C3: Time helpers for Von/Bis Excel export
+function parseTime(str) {
+  if (!str) return null;
+  const match = String(str).match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return null;
+  return parseInt(match[1], 10) * 60 + parseInt(match[2], 10);
+}
+
+function formatTime(minutes) {
+  if (minutes === null || minutes === undefined) return '';
+  const h = Math.floor(minutes / 60);
+  const m = Math.round(minutes % 60);
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
+}
+
+// Helper: Response mit Cache-Control Headers
+function jsonResponse(data, status = 200) {
+  const response = NextResponse.json(data, { status });
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  response.headers.set('Pragma', 'no-cache');
+  return response;
+}
+
 // Dateiname für Stundeneinträge
-function getEintraegeFilename() {
+function getEintraegeFilename(monthParam = null) {
+  if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+    const [year, month] = monthParam.split('-');
+    return `Stundeneintraege_${year}_${month}.json`;
+  }
   const now = new Date();
   const year = now.getFullYear();
   const month = String(now.getMonth() + 1).padStart(2, '0');
@@ -31,8 +58,8 @@ function getAuthHeader() {
 }
 
 // Einträge von Nextcloud laden
-async function loadFromNextcloud() {
-  const filename = getEintraegeFilename();
+async function loadFromNextcloud(monthParam = null) {
+  const filename = getEintraegeFilename(monthParam);
   const url = `${NEXTCLOUD_URL}/remote.php/dav/files/${NEXTCLOUD_USER}${EINTRAEGE_PATH}${encodeURIComponent(filename)}`;
 
   try {
@@ -118,7 +145,8 @@ async function loadDienstplan() {
     if (!response.ok) return null;
 
     const buffer = await response.arrayBuffer();
-    return parseDienstplanForExport(buffer, stammdaten);
+    const result = parseDienstplanForExport(buffer, stammdaten);
+    return result; // { wochen, gesamtStdMap }
   } catch (error) {
     console.error('Fehler beim Laden des Dienstplans:', error);
     return null;
@@ -126,19 +154,23 @@ async function loadDienstplan() {
 }
 
 // Vereinfachter Dienstplan-Parser für Export
+// Returns { wochen, gesamtStdMap } where gesamtStdMap maps name → weekly contract hours from ODS col 25
 function parseDienstplanForExport(buffer, stammdaten = null) {
   const workbook = XLSX.read(buffer, { type: 'array' });
 
   // Bekannte Mitarbeiter aus Stammdaten oder Fallback
   let bekannteNamen;
+  let stammdatenMap = {};
   if (stammdaten && stammdaten.mitarbeiter) {
     bekannteNamen = Object.keys(stammdaten.mitarbeiter).filter(name =>
       stammdaten.mitarbeiter[name].active !== false
     );
+    stammdatenMap = stammdaten.mitarbeiter;
   } else {
     bekannteNamen = ['Ilai', 'Edu', 'Juli', 'Lucia', 'Myriam', 'Alina', 'Berit', 'Catharina', 'Izabella', 'Olli'];
   }
   const wochen = [];
+  const gesamtStdMap = {};
 
   workbook.SheetNames.forEach((sheetName) => {
     if (!sheetName.startsWith('KW')) return;
@@ -187,12 +219,25 @@ function parseDienstplanForExport(buffer, stammdaten = null) {
         const bisRaw = row[colStart + 1];
         const stdRaw = row[colStart + 2];
 
-        const vonStr = String(vonRaw || '').trim().toUpperCase();
+        let vonStr = String(vonRaw || '').trim().toUpperCase();
+
+        // Phase 2.1: FoBi/Fortbildung normalisieren zu "F"
+        if (vonStr === 'FOBI' || vonStr === 'FORTBILDUNG') {
+          vonStr = 'F';
+        }
+
         if (['K', 'U', 'KS', 'KK', 'S', 'F'].includes(vonStr)) {
           let geplanteSollStd = 0;
           if (stdRaw) {
             geplanteSollStd = typeof stdRaw === 'number' ? stdRaw : parseFloat(String(stdRaw).replace(',', '.')) || 0;
           }
+
+          // Phase 2.2: Bei Urlaub ohne Stunden → standardStunden aus Stammdaten
+          if (vonStr === 'U' && geplanteSollStd === 0) {
+            const maStamm = stammdatenMap[name];
+            geplanteSollStd = maStamm?.standardStunden || 6; // Fallback 6h
+          }
+
           tage.push({ tag: tagName, datum: tagDatum, von: null, bis: null, sollStd: geplanteSollStd, status: vonStr });
           return;
         }
@@ -227,18 +272,40 @@ function parseDienstplanForExport(buffer, stammdaten = null) {
       });
 
       woche.tage[name] = tage;
+
+      // C1: Gesamtstd. Arbeitszeitnachweis aus Spalte 25 (nur im ersten KW-Sheet)
+      if (wochen.length === 0 && row.length > 25) {
+        const gesamtStdRaw = row[25];
+        if (gesamtStdRaw !== undefined && gesamtStdRaw !== '' && gesamtStdRaw !== null) {
+          const gesamtStd = typeof gesamtStdRaw === 'number' ? gesamtStdRaw : parseFloat(String(gesamtStdRaw).replace(',', '.'));
+          if (!isNaN(gesamtStd) && gesamtStd > 0) {
+            gesamtStdMap[name] = gesamtStd;
+          }
+        }
+      }
     });
 
     wochen.push(woche);
   });
 
-  return wochen;
+  return { wochen, gesamtStdMap };
 }
 
 // Pausenabzug berechnen
-function berechnePausenabzug(istStunden, isMinor = false) {
+// M1: manualPause = number (von User gesetzt) oder null (Auto)
+// Returns { pauseDisplay, pauseAbzug }
+// pauseDisplay = was im Excel in der Pause-Spalte steht
+// pauseAbzug = was tatsächlich von Ist-Stunden abgezogen wird
+function berechnePausenabzug(istStunden, isMinor = false, manualPause = null) {
   const grenze = isMinor ? 4.5 : 6;
-  return istStunden > grenze ? 0.5 : 0;
+  if (manualPause !== null && manualPause !== undefined) {
+    // Manuelle Pause: wird wirklich abgezogen
+    return { pauseDisplay: manualPause, pauseAbzug: manualPause };
+  }
+  // Auto-Pause: >6h → 30min dokumentiert, aber NICHT von Ist subtrahiert
+  // (Kita-Personal macht faktisch keine Pause, Arbeitszeitnachweis muss es zeigen)
+  const autoPause = istStunden > grenze ? 0.5 : 0;
+  return { pauseDisplay: autoPause, pauseAbzug: 0 };
 }
 
 // Ordner erstellen falls nicht vorhanden
@@ -278,6 +345,16 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
     const monatKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
     const monatName = now.toLocaleDateString('de-DE', { month: 'long', year: 'numeric' });
 
+    // Destructure dienstplan (new format: { wochen, gesamtStdMap })
+    const dienstplanWochen = dienstplan?.wochen || dienstplan || [];
+    const gesamtStdMap = dienstplan?.gesamtStdMap || {};
+
+    // M3: Vormonat-Saldo laden
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonatKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+    const prevData = await loadFromNextcloud(prevMonatKey);
+    const vormonatSaldoMap = {};
+
     // Get active employees
     const mitarbeiter = stammdaten?.mitarbeiter
       ? Object.values(stammdaten.mitarbeiter).filter(m => m.active !== false)
@@ -286,6 +363,41 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
     if (mitarbeiter.length === 0) {
       console.log('Keine Mitarbeiter für Excel-Export gefunden');
       return;
+    }
+
+    // M3: Vormonat-Saldo pro MA berechnen
+    if (prevData && prevData.eintraege) {
+      mitarbeiter.forEach(ma => {
+        let prevSoll = 0;
+        let prevIst = 0;
+        Object.entries(prevData.eintraege).forEach(([key, entry]) => {
+          if (key.startsWith(`${ma.name}-`)) {
+            const sollStd = entry.sollStd || 0;
+            prevSoll += sollStd;
+            const eintrag = entry.value;
+            if (["K", "U", "KK", "F", "S", "KS"].includes(eintrag)) {
+              prevIst += sollStd;
+            } else {
+              const abweichung = parseFloat(eintrag) || 0;
+              prevIst += sollStd + abweichung;
+              // Manuelle Pause vom Vormonat berücksichtigen
+              if (entry.pause !== null && entry.pause !== undefined) {
+                prevIst -= entry.pause;
+              }
+            }
+          }
+        });
+        // Vormonat-Zusatzzeiten
+        const zusatzKey = `${ma.name}-${prevMonatKey}`;
+        const maZusatz = prevData.zusatzzeiten?.[zusatzKey] || {};
+        prevIst += (maZusatz.vorbereitung || []).reduce((s, e) => s + e.stunden, 0);
+        prevIst += (maZusatz.teamsitzung || []).reduce((s, e) => s + e.stunden, 0);
+        prevIst += (maZusatz.buerozeit || []).reduce((s, e) => s + e.stunden, 0);
+
+        if (prevSoll > 0) {
+          vormonatSaldoMap[ma.name] = prevIst - prevSoll;
+        }
+      });
     }
 
     const workbook = XLSX.utils.book_new();
@@ -303,7 +415,7 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
     uebersichtData.push([]); // Empty row
 
     // Column headers
-    uebersichtData.push(['Name', 'Bereich', 'Soll-Std', 'Arbeitszeit', 'Vorbereitung', 'Büro', 'Gesamt', 'Differenz', 'Status']);
+    uebersichtData.push(['Name', 'Bereich', 'Vertrag Std/Wo', 'Urlaubstag (Std)', 'Übertrag Vorm.', 'Soll-Std', 'Arbeitszeit', 'Vorbereitung', 'Teamsitzung', 'Büro', 'Gesamt', 'Differenz', 'Status']);
 
     // Calculate hours for each employee
     mitarbeiter.forEach(ma => {
@@ -311,8 +423,8 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
       let istGesamt = 0;
 
       // Calculate from dienstplan
-      if (dienstplan) {
-        dienstplan.forEach((woche, wochenIdx) => {
+      if (dienstplanWochen.length > 0) {
+        dienstplanWochen.forEach((woche, wochenIdx) => {
           const maTage = woche.tage?.[ma.name] || [];
           maTage.forEach((tag, tagIdx) => {
             if (tag.sollStd > 0) {
@@ -324,27 +436,29 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
 
               if (istDienstplanAbwesend) {
                 istGesamt += tag.sollStd;
-              } else if (['K', 'U', 'KK', 'F'].includes(eintrag)) {
+              } else if (['K', 'KS', 'U', 'KK', 'F'].includes(eintrag)) {
                 istGesamt += tag.sollStd;
               } else {
                 let tagesStd = tag.sollStd;
                 if (eintrag && eintrag !== '0') {
                   tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
                 }
-                const pause = berechnePausenabzug(tagesStd, ma.isMinor);
-                istGesamt += tagesStd - pause;
+                const manualPause = data.eintraege?.[key]?.pause;
+                const { pauseAbzug } = berechnePausenabzug(tagesStd, ma.isMinor, manualPause);
+                istGesamt += tagesStd - pauseAbzug;
               }
             }
           });
         });
       }
 
-      // Zusatzzeiten
+      // Zusatzzeiten (inkl. Teamsitzung)
       const zusatzKey = `${ma.name}-${monatKey}`;
       const maZusatz = data.zusatzzeiten?.[zusatzKey] || {};
       const vorbereitungTotal = (maZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
+      const teamsitzungTotal = (maZusatz.teamsitzung || []).reduce((sum, e) => sum + e.stunden, 0);
       const buerozeitTotal = (maZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
-      const gesamt = istGesamt + vorbereitungTotal + buerozeitTotal;
+      const gesamt = istGesamt + vorbereitungTotal + teamsitzungTotal + buerozeitTotal;
       const differenz = gesamt - sollGesamt;
 
       // Status
@@ -358,12 +472,24 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
       // Bereich display
       const bereichDisplay = ma.bereich === 'Ü3' ? 'Wald' : ma.bereich;
 
+      // C1/C2: Vertrag Std/Wo und Urlaubstag
+      const vertragStdWo = gesamtStdMap[ma.name] || '-';
+      const urlaubstagStd = typeof vertragStdWo === 'number' ? (vertragStdWo / 5) : '-';
+
+      // M3: Vormonat-Saldo
+      const vmSaldo = vormonatSaldoMap[ma.name];
+      const vmSaldoDisplay = vmSaldo !== undefined ? vmSaldo.toFixed(1) : '-';
+
       uebersichtData.push([
         ma.name,
         bereichDisplay,
+        vertragStdWo,
+        urlaubstagStd !== '-' ? urlaubstagStd.toFixed(1) : '-',
+        vmSaldoDisplay,
         sollGesamt,
         istGesamt,
         vorbereitungTotal || '-',
+        teamsitzungTotal || '-',
         buerozeitTotal || '-',
         gesamt,
         differenz,
@@ -377,9 +503,13 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
     uebersichtSheet['!cols'] = [
       { wch: 12 }, // Name
       { wch: 8 },  // Bereich
+      { wch: 14 }, // Vertrag Std/Wo
+      { wch: 14 }, // Urlaubstag (Std)
+      { wch: 14 }, // Übertrag Vorm.
       { wch: 10 }, // Soll-Std
       { wch: 11 }, // Arbeitszeit
       { wch: 12 }, // Vorbereitung
+      { wch: 12 }, // Teamsitzung
       { wch: 8 },  // Büro
       { wch: 10 }, // Gesamt
       { wch: 10 }, // Differenz
@@ -393,12 +523,12 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
       const sheetData = [];
       sheetData.push([`${ma.name} - ${monatName}`]);
       sheetData.push([]);
-      sheetData.push(['Woche', 'Tag', 'Datum', 'Soll', 'Ist', 'Abweichung', 'Pause', 'Bemerkung']);
+      sheetData.push(['Woche', 'Tag', 'Datum', 'Von', 'Bis', 'Soll', 'Ist', 'Abweichung', 'Pause', 'Bemerkung']);
 
       let maGesamt = { soll: 0, ist: 0, pause: 0 };
 
-      if (dienstplan) {
-        dienstplan.forEach((woche, wochenIdx) => {
+      if (dienstplanWochen.length > 0) {
+        dienstplanWochen.forEach((woche, wochenIdx) => {
           const maTage = woche.tage?.[ma.name] || [];
 
           maTage.forEach((tag, tagIdx) => {
@@ -409,6 +539,8 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
             let abweichung = '-';
             let pauseAbzug = 0;
             let bemerkung = '';
+            let vonStr = '';
+            let bisStr = '';
 
             const istDienstplanAbwesend = ['K', 'U', 'KK', 'F', 'S', 'KS'].includes(tag.status);
 
@@ -417,28 +549,54 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
               istStd = 0;
             } else if (istDienstplanAbwesend) {
               istStd = tag.sollStd;
-              bemerkung = tag.status === 'K' ? 'Krank' :
+              bemerkung = tag.status === 'KS' ? 'Krankschreibung' :
+                         tag.status === 'K' ? 'Krank (o. KS)' :
                          tag.status === 'U' ? 'Urlaub' :
-                         tag.status === 'KK' ? 'Kind krank' :
+                         tag.status === 'KK' ? 'Kindkrankschreibung' :
                          tag.status === 'F' ? 'Fortbildung' :
                          tag.status === 'S' ? 'Seminar' : tag.status;
-            } else if (['K', 'U', 'KK', 'F'].includes(eintrag)) {
+              // No Von/Bis for absence days
+            } else if (['K', 'KS', 'U', 'KK', 'F'].includes(eintrag)) {
               istStd = tag.sollStd;
-              bemerkung = eintrag === 'K' ? 'Krank' :
+              bemerkung = eintrag === 'KS' ? 'Krankschreibung' :
+                         eintrag === 'K' ? 'Krank (o. KS)' :
                          eintrag === 'U' ? 'Urlaub' :
-                         eintrag === 'KK' ? 'Kind krank' :
+                         eintrag === 'KK' ? 'Kindkrankschreibung' :
                          eintrag === 'F' ? 'Fortbildung' : eintrag;
             } else {
               let tagesStd = tag.sollStd;
-              if (eintrag && eintrag !== '0') {
-                const numValue = parseFloat(eintrag) || 0;
+              const numValue = (eintrag && eintrag !== '0') ? (parseFloat(eintrag) || 0) : 0;
+              if (numValue !== 0) {
                 tagesStd = tag.sollStd + numValue;
                 abweichung = numValue > 0 ? `+${numValue}` : numValue.toString();
               } else {
                 abweichung = '0';
               }
-              pauseAbzug = berechnePausenabzug(tagesStd, ma.isMinor);
-              istStd = tagesStd - pauseAbzug;
+              const manualPause = data.eintraege?.[key]?.pause;
+              const pauseResult = berechnePausenabzug(tagesStd, ma.isMinor, manualPause);
+              pauseAbzug = pauseResult.pauseDisplay;
+              istStd = tagesStd - pauseResult.pauseAbzug;
+
+              // C3: Von/Bis berechnen
+              vonStr = tag.von || '';
+              if (tag.von && tag.bis) {
+                const vonMin = parseTime(tag.von);
+                const bisMin = parseTime(tag.bis);
+                if (vonMin !== null && bisMin !== null) {
+                  // Bis = Dienstplan-Bis + Abweichung (in Stunden → Minuten)
+                  let adjustedBis = bisMin + Math.round(numValue * 60);
+                  // Auto-Pause (>6h, keine manuelle Pause): +30min zur Bis-Zeit
+                  if (manualPause === null || manualPause === undefined) {
+                    const grenze = ma.isMinor ? 4.5 : 6;
+                    if (tagesStd > grenze) {
+                      adjustedBis += 30;
+                    }
+                  }
+                  bisStr = formatTime(adjustedBis);
+                } else {
+                  bisStr = tag.bis || '';
+                }
+              }
             }
 
             maGesamt.soll += tag.sollStd;
@@ -449,6 +607,8 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
               woche.name,
               tag.tag,
               tag.datum,
+              vonStr,
+              bisStr,
               tag.sollStd || '-',
               istStd || '-',
               abweichung,
@@ -464,29 +624,55 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
 
       // Summary rows
       sheetData.push([]);
-      sheetData.push(['', '', 'SUMME', maGesamt.soll, maGesamt.ist, '', maGesamt.pause, '']);
+      sheetData.push(['', '', 'SUMME', '', '', maGesamt.soll, maGesamt.ist, '', maGesamt.pause, '']);
 
-      // Zusatzzeiten
+      // Zusatzzeiten (inkl. Teamsitzung)
       const zusatzKey = `${ma.name}-${monatKey}`;
       const maZusatz = data.zusatzzeiten?.[zusatzKey] || {};
       const vorbereitungTotal = (maZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
+      const teamsitzungTotal = (maZusatz.teamsitzung || []).reduce((sum, e) => sum + e.stunden, 0);
       const buerozeitTotal = (maZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
 
-      if (vorbereitungTotal > 0) {
-        sheetData.push(['', '', 'Vorbereitung', '', vorbereitungTotal, '', '', '']);
-      }
-      if (buerozeitTotal > 0) {
-        sheetData.push(['', '', 'Bürozeit', '', buerozeitTotal, '', '', '']);
+      // Zusatzzeiten-Einträge mit von/bis Details
+      const zusatzTypes = [
+        { key: 'vorbereitung', label: 'Vorbereitung', total: vorbereitungTotal },
+        { key: 'teamsitzung', label: 'Teamsitzung', total: teamsitzungTotal },
+        { key: 'buerozeit', label: 'Bürozeit', total: buerozeitTotal }
+      ];
+      zusatzTypes.forEach(({ key, label, total }) => {
+        if (total > 0) {
+          const entries = maZusatz[key] || [];
+          // Show individual day entries with von/bis
+          entries.forEach(e => {
+            if (e.stunden > 0) {
+              sheetData.push([
+                '', '', e.datum || '',
+                e.von || '', e.bis || '',
+                '', e.stunden, '',
+                '', label
+              ]);
+            }
+          });
+          sheetData.push(['', '', `${label} Summe`, '', '', '', total, '', '', '']);
+        }
+      });
+
+      // M3: Vormonat-Saldo in Einzel-Sheet
+      const maVmSaldo = vormonatSaldoMap[ma.name];
+      if (maVmSaldo !== undefined) {
+        sheetData.push(['', '', `Übertrag Vormonat`, '', '', '', `${maVmSaldo >= 0 ? '+' : ''}${maVmSaldo.toFixed(1)}`, '', '', '']);
       }
 
-      const gesamtMitZusatz = maGesamt.ist + vorbereitungTotal + buerozeitTotal;
-      sheetData.push(['', '', 'GESAMT', maGesamt.soll, gesamtMitZusatz, '', '', '']);
+      const gesamtMitZusatz = maGesamt.ist + vorbereitungTotal + teamsitzungTotal + buerozeitTotal;
+      sheetData.push(['', '', 'GESAMT', '', '', maGesamt.soll, gesamtMitZusatz, '', '', '']);
 
       const maSheet = XLSX.utils.aoa_to_sheet(sheetData);
       maSheet['!cols'] = [
         { wch: 8 },  // Woche
         { wch: 5 },  // Tag
         { wch: 8 },  // Datum
+        { wch: 7 },  // Von
+        { wch: 7 },  // Bis
         { wch: 6 },  // Soll
         { wch: 6 },  // Ist
         { wch: 10 }, // Abweichung
@@ -529,10 +715,10 @@ async function generateAndSaveExcel(data, stammdaten, dienstplan) {
 }
 
 // GET: Einträge laden
-export async function GET() {
+export async function GET(request) {
   try {
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
-      return NextResponse.json({
+      return jsonResponse({
         eintraege: {},
         approvals: {},
         submissions: {},
@@ -541,14 +727,18 @@ export async function GET() {
       });
     }
 
-    const data = await loadFromNextcloud();
-    return NextResponse.json(data);
+    // Phase 5: Optionaler Monat-Parameter
+    const { searchParams } = new URL(request.url);
+    const monthParam = searchParams.get('month');
+
+    const data = await loadFromNextcloud(monthParam);
+    return jsonResponse(data);
 
   } catch (error) {
     console.error('Fehler beim Laden:', error);
-    return NextResponse.json(
+    return jsonResponse(
       { error: 'Einträge konnten nicht geladen werden', eintraege: {}, approvals: {} },
-      { status: 500 }
+      500
     );
   }
 }
@@ -557,7 +747,7 @@ export async function GET() {
 export async function POST(request) {
   try {
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
-      return NextResponse.json({
+      return jsonResponse({
         success: true,
         message: 'Demo-Modus: Einträge werden nicht gespeichert',
         demo: true
@@ -568,9 +758,9 @@ export async function POST(request) {
     const { mitarbeiter, eintraege: neueEintraege, zusatzzeiten: neueZusatzzeiten } = body;
 
     if (!mitarbeiter) {
-      return NextResponse.json(
+      return jsonResponse(
         { error: 'Mitarbeiter erforderlich' },
-        { status: 400 }
+        400
       );
     }
 
@@ -581,8 +771,14 @@ export async function POST(request) {
     if (neueEintraege) {
       Object.keys(neueEintraege).forEach(key => {
         if (key.startsWith(mitarbeiter + '-')) {
+          // Unterstütze sowohl altes Format (nur value) als auch neues Format { value, sollStd }
+          const eintrag = neueEintraege[key];
+          const isNewFormat = typeof eintrag === 'object' && eintrag !== null && 'value' in eintrag;
+
           data.eintraege[key] = {
-            value: neueEintraege[key],
+            value: isNewFormat ? eintrag.value : eintrag,
+            sollStd: isNewFormat ? eintrag.sollStd : 0, // Phase 5: sollStd für Saldo-Berechnung
+            pause: isNewFormat ? (eintrag.pause !== undefined ? eintrag.pause : null) : null, // M1: Pause pro Tag
             timestamp: new Date().toISOString(),
             mitarbeiter: mitarbeiter
           };
@@ -619,7 +815,7 @@ export async function POST(request) {
     ]);
     await generateAndSaveExcel(data, stammdaten, dienstplan);
 
-    return NextResponse.json({
+    return jsonResponse({
       success: true,
       message: 'Einträge gespeichert',
       timestamp: new Date().toISOString()
@@ -627,9 +823,9 @@ export async function POST(request) {
 
   } catch (error) {
     console.error('Fehler beim Speichern:', error);
-    return NextResponse.json(
+    return jsonResponse(
       { error: 'Einträge konnten nicht gespeichert werden: ' + error.message },
-      { status: 500 }
+      500
     );
   }
 }
@@ -638,7 +834,7 @@ export async function POST(request) {
 export async function PUT(request) {
   try {
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
-      return NextResponse.json({
+      return jsonResponse({
         success: true,
         message: 'Demo-Modus',
         demo: true
@@ -649,9 +845,9 @@ export async function PUT(request) {
     const { mitarbeiter, monat, status, kommentar } = body;
 
     if (!mitarbeiter || !monat || !status) {
-      return NextResponse.json(
+      return jsonResponse(
         { error: 'Mitarbeiter, Monat und Status erforderlich' },
-        { status: 400 }
+        400
       );
     }
 
@@ -677,7 +873,7 @@ export async function PUT(request) {
     ]);
     await generateAndSaveExcel(data, stammdaten, dienstplan);
 
-    return NextResponse.json({
+    return jsonResponse({
       success: true,
       message: `Status auf "${status}" gesetzt`,
       timestamp: new Date().toISOString()
@@ -685,9 +881,9 @@ export async function PUT(request) {
 
   } catch (error) {
     console.error('Fehler bei Genehmigung:', error);
-    return NextResponse.json(
+    return jsonResponse(
       { error: 'Genehmigung konnte nicht gespeichert werden: ' + error.message },
-      { status: 500 }
+      500
     );
   }
 }

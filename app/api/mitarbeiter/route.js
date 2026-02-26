@@ -8,6 +8,14 @@ const DIENSTPLAN_PATH = process.env.DIENSTPLAN_PATH || '/03 Kinderbetreuung/Päd
 
 const STAMMDATEN_FILENAME = 'Mitarbeiter_Stammdaten.json';
 
+// Helper: Response mit Cache-Control Headers
+function jsonResponse(data, status = 200) {
+  const response = NextResponse.json(data, { status });
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  response.headers.set('Pragma', 'no-cache');
+  return response;
+}
+
 // Generiere zufällige 4-stellige PIN
 function generatePin() {
   return String(Math.floor(1000 + Math.random() * 9000));
@@ -190,7 +198,7 @@ export async function GET(request) {
   try {
     // Prüfe ob Nextcloud konfiguriert ist
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
-      return NextResponse.json(getDemoStammdaten());
+      return jsonResponse(getDemoStammdaten());
     }
 
     // Versuche Stammdaten von Nextcloud zu laden
@@ -204,11 +212,11 @@ export async function GET(request) {
       stammdaten.newlyCreated = true;
     }
 
-    return NextResponse.json(stammdaten);
+    return jsonResponse(stammdaten);
 
   } catch (error) {
     console.error('Fehler beim Laden der Stammdaten:', error);
-    return NextResponse.json(getDemoStammdaten());
+    return jsonResponse(getDemoStammdaten());
   }
 }
 
@@ -219,12 +227,12 @@ export async function POST(request) {
     const { name, bereich, isMinor, canTrackPrepTime, standardStunden } = body;
 
     if (!name || !bereich) {
-      return NextResponse.json({ error: 'Name und Bereich erforderlich' }, { status: 400 });
+      return jsonResponse({ error: 'Name und Bereich erforderlich' }, 400);
     }
 
     // Prüfe ob Nextcloud konfiguriert ist
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
-      return NextResponse.json({ error: 'Nextcloud nicht konfiguriert' }, { status: 500 });
+      return jsonResponse({ error: 'Nextcloud nicht konfiguriert' }, 500);
     }
 
     // Lade aktuelle Daten
@@ -235,7 +243,7 @@ export async function POST(request) {
 
     // Prüfe ob Name bereits existiert
     if (stammdaten.mitarbeiter[name]) {
-      return NextResponse.json({ error: 'Mitarbeiter existiert bereits' }, { status: 400 });
+      return jsonResponse({ error: 'Mitarbeiter existiert bereits' }, 400);
     }
 
     // Generiere neue PIN
@@ -257,7 +265,7 @@ export async function POST(request) {
     // Speichere auf Nextcloud
     await saveToNextcloud(STAMMDATEN_FILENAME, stammdaten);
 
-    return NextResponse.json({
+    return jsonResponse({
       success: true,
       pin: newPin,
       message: `Mitarbeiter ${name} hinzugefügt. PIN: ${newPin}`
@@ -265,7 +273,7 @@ export async function POST(request) {
 
   } catch (error) {
     console.error('Fehler beim Hinzufügen:', error);
-    return NextResponse.json({ error: 'Speichern fehlgeschlagen' }, { status: 500 });
+    return jsonResponse({ error: 'Speichern fehlgeschlagen' }, 500);
   }
 }
 
@@ -276,22 +284,22 @@ export async function PUT(request) {
     const { name, updates } = body;
 
     if (!name || !updates) {
-      return NextResponse.json({ error: 'Name und Updates erforderlich' }, { status: 400 });
+      return jsonResponse({ error: 'Name und Updates erforderlich' }, 400);
     }
 
     // Prüfe ob Nextcloud konfiguriert ist
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
-      return NextResponse.json({ error: 'Nextcloud nicht konfiguriert' }, { status: 500 });
+      return jsonResponse({ error: 'Nextcloud nicht konfiguriert' }, 500);
     }
 
     // Lade aktuelle Daten
     let stammdaten = await fetchFromNextcloud(STAMMDATEN_FILENAME);
     if (!stammdaten || !stammdaten.mitarbeiter[name]) {
-      return NextResponse.json({ error: 'Mitarbeiter nicht gefunden' }, { status: 404 });
+      return jsonResponse({ error: 'Mitarbeiter nicht gefunden' }, 404);
     }
 
     // Aktualisiere erlaubte Felder
-    const allowedFields = ['bereich', 'pin', 'isMinor', 'standardStunden', 'canTrackPrepTime', 'active'];
+    const allowedFields = ['bereich', 'pin', 'isMinor', 'standardStunden', 'canTrackPrepTime', 'active', 'role'];
     for (const field of allowedFields) {
       if (updates[field] !== undefined) {
         stammdaten.mitarbeiter[name][field] = updates[field];
@@ -302,11 +310,11 @@ export async function PUT(request) {
     // Speichere auf Nextcloud
     await saveToNextcloud(STAMMDATEN_FILENAME, stammdaten);
 
-    return NextResponse.json({ success: true, message: `Mitarbeiter ${name} aktualisiert` });
+    return jsonResponse({ success: true, message: `Mitarbeiter ${name} aktualisiert` });
 
   } catch (error) {
     console.error('Fehler beim Aktualisieren:', error);
-    return NextResponse.json({ error: 'Speichern fehlgeschlagen' }, { status: 500 });
+    return jsonResponse({ error: 'Speichern fehlgeschlagen' }, 500);
   }
 }
 
@@ -317,24 +325,24 @@ export async function DELETE(request) {
     const name = searchParams.get('name');
 
     if (!name) {
-      return NextResponse.json({ error: 'Name erforderlich' }, { status: 400 });
+      return jsonResponse({ error: 'Name erforderlich' }, 400);
     }
 
     // Prüfe ob Nextcloud konfiguriert ist
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
-      return NextResponse.json({ error: 'Nextcloud nicht konfiguriert' }, { status: 500 });
+      return jsonResponse({ error: 'Nextcloud nicht konfiguriert' }, 500);
     }
 
     // Lade aktuelle Daten
     let stammdaten = await fetchFromNextcloud(STAMMDATEN_FILENAME);
     if (!stammdaten || !stammdaten.mitarbeiter[name]) {
-      return NextResponse.json({ error: 'Mitarbeiter nicht gefunden' }, { status: 404 });
+      return jsonResponse({ error: 'Mitarbeiter nicht gefunden' }, 404);
     }
 
     // Verhindere Löschen des letzten Leitung-Users
     const leitungUsers = Object.values(stammdaten.mitarbeiter).filter(m => m.role === 'leitung' && m.active);
     if (stammdaten.mitarbeiter[name].role === 'leitung' && leitungUsers.length <= 1) {
-      return NextResponse.json({ error: 'Kann letzten Admin nicht löschen' }, { status: 400 });
+      return jsonResponse({ error: 'Kann letzten Admin nicht löschen' }, 400);
     }
 
     // Soft delete: Setze active auf false
@@ -344,10 +352,10 @@ export async function DELETE(request) {
     // Speichere auf Nextcloud
     await saveToNextcloud(STAMMDATEN_FILENAME, stammdaten);
 
-    return NextResponse.json({ success: true, message: `Mitarbeiter ${name} deaktiviert` });
+    return jsonResponse({ success: true, message: `Mitarbeiter ${name} deaktiviert` });
 
   } catch (error) {
     console.error('Fehler beim Löschen:', error);
-    return NextResponse.json({ error: 'Löschen fehlgeschlagen' }, { status: 500 });
+    return jsonResponse({ error: 'Löschen fehlgeschlagen' }, 500);
   }
 }

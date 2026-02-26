@@ -2,11 +2,18 @@
 
 import { useState, useEffect } from 'react';
 
-// Status-Optionen für Abwesenheit (separate vom numerischen Stepper)
+// Krank-Untertypen (Sub-Auswahl nach Feedback Catharina Feb 2026)
+const KRANK_OPTIONEN = [
+  { value: "KS", label: "Krankschreibung", color: "bg-red-100 text-red-700 border-red-300" },
+  { value: "K", label: "Krank (o. KS)", color: "bg-red-100 text-red-700 border-red-300" },
+  { value: "KK", label: "Kindkrankschreibung", color: "bg-pink-100 text-pink-700 border-pink-300" },
+];
+
+// Alle Status-Optionen (für Badge-Anzeige und Abwesenheitsprüfung)
+// Urlaub (U) und Fortbildung (F) kommen jetzt aus dem Dienstplan, keine manuellen Buttons mehr
 const STATUS_OPTIONEN = [
-  { value: "K", label: "Krank", color: "bg-red-100 text-red-700 border-red-300" },
+  ...KRANK_OPTIONEN,
   { value: "U", label: "Urlaub", color: "bg-purple-100 text-purple-700 border-purple-300" },
-  { value: "KK", label: "Kind krank", color: "bg-pink-100 text-pink-700 border-pink-300" },
   { value: "F", label: "Fortbildung", color: "bg-teal-100 text-teal-700 border-teal-300" },
 ];
 
@@ -17,9 +24,14 @@ const BEREICH_DISPLAY = {
 };
 
 // Stepper Konfiguration
-const STEPPER_MIN = -3;
-const STEPPER_MAX = 3;
+const STEPPER_MIN = -7.5;
+const STEPPER_MAX = 7.5;
 const STEPPER_STEP = 0.25; // 15 Minuten
+
+// Pause Konfiguration (§4 ArbZG)
+const PAUSE_MIN = 0;
+const PAUSE_MAX = 1; // max 1 Stunde
+const PAUSE_STEP = 0.25; // 15 Minuten
 
 // Format Stundenzahl für Anzeige
 function formatStunden(value) {
@@ -33,11 +45,10 @@ function formatStunden(value) {
 }
 
 // Pausenabzug berechnen
-// Erwachsene: Ab mehr als 6 Stunden = 0.5 Std Pause
-// Minderjährige: Ab mehr als 4.5 Stunden = 0.5 Std Pause (Jugendarbeitsschutzgesetz)
+// Phase 3.1: In der App deaktiviert (Catharina: "keine Pausen genommen")
+// Für Excel-Export bleibt die Berechnung in eintraege/route.js aktiv (Arbeitsrecht)
 function berechnePausenabzug(istStunden, isMinor = false) {
-  const grenze = isMinor ? 4.5 : 6;
-  return istStunden > grenze ? 0.5 : 0;
+  return 0; // Deaktiviert in App
 }
 
 export default function Home() {
@@ -74,40 +85,188 @@ export default function Home() {
   const [adminSaving, setAdminSaving] = useState(false);
   const [adminError, setAdminError] = useState(null);
 
+  // Month preview state (for manager)
+  const [selectedMonth, setSelectedMonth] = useState(null); // null = current month
+  const [monthError, setMonthError] = useState(null);
+
+  // Phase 3.3: Vertretung-Modus für Tage ohne geplanten Dienst
+  const [vertretungAktiv, setVertretungAktiv] = useState({});
+
+  // Krank Sub-Menü State (welcher Tag hat die Krank-Auswahl offen)
+  const [krankSubMenu, setKrankSubMenu] = useState({});
+
+  // M1: Pausen pro Tag (Key: "Name-w-d", Value: Stunden; null = Auto)
+  const [pausen, setPausen] = useState({});
+  const [savedPausen, setSavedPausen] = useState({});
+
+  // Phase 5: Stundenübertrag vom Vormonat
+  const [vormonatSaldo, setVormonatSaldo] = useState(null);
+
   // Lade Dienstplan und gespeicherte Einträge beim Start
   useEffect(() => {
     loadData();
   }, []);
 
-  const loadData = async () => {
+  // Auto-refresh when tab regains focus
+  useEffect(() => {
+    const handleFocus = () => {
+      // Only refresh if not currently loading and user is logged in
+      if (!loading && currentUser) {
+        loadData(selectedMonth);
+      }
+    };
+    window.addEventListener('focus', handleFocus);
+    return () => window.removeEventListener('focus', handleFocus);
+  }, [loading, currentUser, selectedMonth]);
+
+  const loadData = async (monthOverride = null) => {
     try {
       setLoading(true);
+      setMonthError(null);
 
-      // Parallel laden: Dienstplan und gespeicherte Einträge
-      const [dienstplanRes, eintraegeRes] = await Promise.all([
-        fetch('/api/dienstplan'),
-        fetch('/api/eintraege')
+      // Build API URL with optional month parameter
+      const dienstplanUrl = monthOverride
+        ? `/api/dienstplan?month=${monthOverride}`
+        : '/api/dienstplan';
+
+      // Berechne Vormonat für Stundenübertrag (Phase 5)
+      const now = new Date();
+      const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+      const prevMonatKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+
+      // Parallel laden: Dienstplan, gespeicherte Einträge, und Vormonat
+      const [dienstplanRes, eintraegeRes, prevMonthRes] = await Promise.all([
+        fetch(dienstplanUrl),
+        fetch('/api/eintraege'),
+        fetch(`/api/eintraege?month=${prevMonatKey}`)
       ]);
 
-      if (!dienstplanRes.ok) throw new Error('Fehler beim Laden des Dienstplans');
-
       const dienstplanData = await dienstplanRes.json();
+
+      // Check if it's an error response (file not found)
+      if (dienstplanData.error) {
+        setMonthError(dienstplanData.message);
+        // Keep current dienstplan, don't update
+        if (eintraegeRes.ok) {
+          const eintraegeData = await eintraegeRes.json();
+          setApprovals(eintraegeData.approvals || {});
+          setSubmissions(eintraegeData.submissions || {});
+        }
+        return;
+      }
       setDienstplan(dienstplanData);
+
+      // Phase 3.2: Automatisch zur aktuellen Woche springen
+      if (dienstplanData.wochen?.length > 0) {
+        const today = new Date();
+        const todayStr = `${String(today.getDate()).padStart(2, '0')}.${String(today.getMonth() + 1).padStart(2, '0')}.`;
+
+        const currentWeekIndex = dienstplanData.wochen.findIndex(woche => {
+          // Parse zeitraum "09.12. - 13.12.2025"
+          const match = woche.zeitraum?.match(/(\d{2})\.(\d{2})\.\s*[-–]\s*(\d{2})\.(\d{2})\.?/);
+          if (!match) return false;
+
+          const startDay = parseInt(match[1], 10);
+          const startMonth = parseInt(match[2], 10);
+          const endDay = parseInt(match[3], 10);
+          const endMonth = parseInt(match[4], 10);
+
+          const currentDay = today.getDate();
+          const currentMonth = today.getMonth() + 1;
+
+          // Einfacher Vergleich: Prüfe ob heute zwischen Start und Ende liegt
+          const startDate = startMonth * 100 + startDay;
+          const endDate = endMonth * 100 + endDay;
+          const todayDate = currentMonth * 100 + currentDay;
+
+          return todayDate >= startDate && todayDate <= endDate;
+        });
+
+        if (currentWeekIndex >= 0) {
+          setSelectedWeek(currentWeekIndex);
+        }
+      }
 
       if (eintraegeRes.ok) {
         const eintraegeData = await eintraegeRes.json();
         // Gespeicherte Einträge in lokales Format konvertieren
         const localEintraege = {};
+        const localPausen = {};
         Object.entries(eintraegeData.eintraege || {}).forEach(([key, data]) => {
           localEintraege[key] = data.value;
+          // M1: Pause-Werte laden
+          if (data.pause !== undefined && data.pause !== null) {
+            localPausen[key] = data.pause;
+          }
         });
         setSavedEintraege(localEintraege);
         setEintraege(localEintraege);
+        setPausen(localPausen);
+        setSavedPausen(localPausen);
         setApprovals(eintraegeData.approvals || {});
         setSubmissions(eintraegeData.submissions || {});
         // Load zusatzzeiten
         setZusatzzeiten(eintraegeData.zusatzzeiten || {});
         setSavedZusatzzeiten(eintraegeData.zusatzzeiten || {});
+      }
+
+      // Phase 5: Vormonat-Saldo berechnen
+      if (prevMonthRes.ok) {
+        const prevMonthData = await prevMonthRes.json();
+        const prevEintraege = prevMonthData.eintraege || {};
+        const prevZusatzzeiten = prevMonthData.zusatzzeiten || {};
+
+        // Berechne Saldo für jeden Mitarbeiter
+        const saldoMap = {};
+
+        // Wir brauchen auch den Vormonat-Dienstplan für Soll-Stunden
+        // Da wir den nicht haben, berechnen wir aus den gespeicherten Daten
+        // Die Einträge haben das Format: mitarbeiter-woche-tag = value
+        // Wir gruppieren nach Mitarbeiter und summieren
+
+        dienstplanData.mitarbeiter?.forEach(ma => {
+          const maName = ma.name;
+          let prevSoll = 0;
+          let prevIst = 0;
+
+          // Berechne aus Einträgen
+          Object.entries(prevEintraege).forEach(([key, data]) => {
+            if (key.startsWith(`${maName}-`)) {
+              // data enthält { value, sollStd, ... }
+              const sollStd = data.sollStd || 0;
+              prevSoll += sollStd;
+
+              const eintrag = data.value;
+              if (["K", "U", "KK", "F", "S", "KS"].includes(eintrag)) {
+                // Abwesenheit: Soll = Ist
+                prevIst += sollStd;
+              } else {
+                // Normaler Tag mit Abweichung
+                const abweichung = parseFloat(eintrag) || 0;
+                prevIst += sollStd + abweichung;
+              }
+            }
+          });
+
+          // Zusatzzeiten hinzufügen
+          const zusatzKey = `${maName}-${prevMonatKey}`;
+          const maZusatz = prevZusatzzeiten[zusatzKey] || {};
+          const vorbereitungTotal = (maZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
+          const buerozeitTotal = (maZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
+          prevIst += vorbereitungTotal + buerozeitTotal;
+
+          // Saldo = Ist - Soll (positiv = Überstunden, negativ = Minusstunden)
+          if (prevSoll > 0) {
+            saldoMap[maName] = {
+              soll: prevSoll,
+              ist: prevIst,
+              saldo: prevIst - prevSoll,
+              monat: prevMonatKey
+            };
+          }
+        });
+
+        setVormonatSaldo(saldoMap);
       }
 
       setError(null);
@@ -246,6 +405,8 @@ export default function Home() {
               setPendingUser(null);
               setPinInput('');
               setPinResetSent(false);
+              // Reset month selection for new user (Phase 1.1)
+              setSelectedMonth(null);
               setAnsicht('erfassung');
             } else {
               setPinError(true);
@@ -390,6 +551,11 @@ export default function Home() {
     const aktuelleWoche = wochen[selectedWeek];
     const maTage = aktuelleWoche?.tage?.[currentUser.name] || [];
 
+    // B3: isCurrentMonth für gesamten Erfassungs-Screen
+    const now_erfassung = new Date();
+    const currentMonatKey_erfassung = `${now_erfassung.getFullYear()}-${String(now_erfassung.getMonth() + 1).padStart(2, '0')}`;
+    const isCurrentMonth = !selectedMonth || selectedMonth === currentMonatKey_erfassung;
+
     const handleAbweichung = (tagIndex, value) => {
       const key = `${currentUser.name}-${selectedWeek}-${tagIndex}`;
       setEintraege(prev => ({ ...prev, [key]: value }));
@@ -408,6 +574,34 @@ export default function Home() {
       return eintraege[`${currentUser.name}-${selectedWeek}-${tagIndex}`];
     };
 
+    // M1: Pause-Handling
+    const getPause = (tagIndex) => {
+      const key = `${currentUser.name}-${selectedWeek}-${tagIndex}`;
+      return pausen[key]; // undefined = Auto, number = manual
+    };
+
+    const handlePauseChange = (tagIndex, delta) => {
+      const key = `${currentUser.name}-${selectedWeek}-${tagIndex}`;
+      const current = pausen[key];
+      if (current === undefined) {
+        // Switch from Auto to manual: start at 0.5 if + pressed, 0 if - pressed
+        const newValue = delta > 0 ? 0.5 : 0;
+        setPausen(prev => ({ ...prev, [key]: newValue }));
+      } else {
+        const newValue = Math.max(PAUSE_MIN, Math.min(PAUSE_MAX, current + delta));
+        setPausen(prev => ({ ...prev, [key]: newValue }));
+      }
+    };
+
+    const resetPauseToAuto = (tagIndex) => {
+      const key = `${currentUser.name}-${selectedWeek}-${tagIndex}`;
+      setPausen(prev => {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      });
+    };
+
     const berechneWochensumme = () => {
       let sollSumme = 0;
       let istSumme = 0;
@@ -422,20 +616,23 @@ export default function Home() {
           const istDienstplanAbwesend = ["K", "U", "KK", "F", "S", "KS"].includes(tag.status);
 
           if (istDienstplanAbwesend) {
-            // Bei Abwesenheit lt. Dienstplan: Soll-Stunden = Ist-Stunden, keine Pause
             istSumme += tag.sollStd;
-          } else if (["K", "U", "KK", "F"].includes(eintrag)) {
-            // Bei manuell eingetragener Abwesenheit: Soll-Stunden zählen, keine Pause
+          } else if (["K", "KS", "U", "KK", "F"].includes(eintrag)) {
             istSumme += tag.sollStd;
           } else {
-            // Normaler Arbeitstag: Abweichung und Pause berechnen
             let tagesStd = tag.sollStd;
             if (eintrag && eintrag !== "0") {
               tagesStd = tag.sollStd + (parseFloat(eintrag) || 0);
             }
-            const pause = berechnePausenabzug(tagesStd, currentUser.isMinor);
-            pausenAbzug += pause;
-            istSumme += tagesStd - pause;
+            // M1: Manuelle Pause abziehen, Auto-Pause NICHT (nur fürs Excel)
+            const manualPause = getPause(idx);
+            if (manualPause !== undefined) {
+              pausenAbzug += manualPause;
+              istSumme += tagesStd - manualPause;
+            } else {
+              // Auto: keine Pause in der App abziehen
+              istSumme += tagesStd;
+            }
           }
         }
       });
@@ -448,6 +645,14 @@ export default function Home() {
       for (const key of Object.keys(eintraege)) {
         if (key.startsWith(currentUser.name + '-')) {
           if (eintraege[key] !== savedEintraege[key]) {
+            return true;
+          }
+        }
+      }
+      // Prüfen ob es ungespeicherte Änderungen bei Pausen gibt
+      for (const key of Object.keys(pausen)) {
+        if (key.startsWith(currentUser.name + '-')) {
+          if (pausen[key] !== savedPausen[key]) {
             return true;
           }
         }
@@ -468,11 +673,42 @@ export default function Home() {
         setSaving(true);
         setSaveError(null);
 
-        // Nur Einträge für aktuellen Mitarbeiter sammeln
+        // Einträge für aktuellen Mitarbeiter sammeln - inkl. sollStd und pause für Saldo-Berechnung
         const mitarbeiterEintraege = {};
         Object.keys(eintraege).forEach(key => {
           if (key.startsWith(currentUser.name + '-')) {
-            mitarbeiterEintraege[key] = eintraege[key];
+            // Key-Format: "name-woche-tag"
+            const parts = key.split('-');
+            const wochenIdx = parseInt(parts[parts.length - 2], 10);
+            const tagIdx = parseInt(parts[parts.length - 1], 10);
+
+            // Hole sollStd aus dem Dienstplan
+            const tag = wochen[wochenIdx]?.tage?.[currentUser.name]?.[tagIdx];
+            const sollStd = tag?.sollStd || 0;
+
+            // M1: Pause-Wert einbetten (null = Auto)
+            const pauseValue = pausen[key];
+
+            mitarbeiterEintraege[key] = {
+              value: eintraege[key],
+              sollStd: sollStd,
+              pause: pauseValue !== undefined ? pauseValue : null
+            };
+          }
+        });
+        // Auch Einträge mit Pause aber ohne Eintrag (falls nur Pause gesetzt)
+        Object.keys(pausen).forEach(key => {
+          if (key.startsWith(currentUser.name + '-') && !mitarbeiterEintraege[key]) {
+            const parts = key.split('-');
+            const wochenIdx = parseInt(parts[parts.length - 2], 10);
+            const tagIdx = parseInt(parts[parts.length - 1], 10);
+            const tag = wochen[wochenIdx]?.tage?.[currentUser.name]?.[tagIdx];
+            const sollStd = tag?.sollStd || 0;
+            mitarbeiterEintraege[key] = {
+              value: eintraege[key] || '0',
+              sollStd: sollStd,
+              pause: pausen[key]
+            };
           }
         });
 
@@ -502,6 +738,7 @@ export default function Home() {
 
         // Gespeicherte Einträge aktualisieren
         setSavedEintraege(prev => ({ ...prev, ...mitarbeiterEintraege }));
+        setSavedPausen(prev => ({ ...prev, ...pausen }));
         setSavedZusatzzeiten(prev => ({ ...prev, ...mitarbeiterZusatzzeiten }));
 
         // Submission-Status aktualisieren
@@ -552,7 +789,53 @@ export default function Home() {
                 {aktuelleWoche?.name || 'Woche'} • {aktuelleWoche?.zeitraum || ''}
               </div>
             </div>
-            <div className="flex gap-1">
+            <div className="flex gap-1 items-center">
+              {/* Refresh button (all users) */}
+              <button
+                onClick={() => loadData(selectedMonth)}
+                className="p-2 hover:bg-white/20 rounded-lg transition-all text-sm"
+                title="Aktualisieren"
+                disabled={loading}
+              >
+                {loading ? '⏳' : '🔄'}
+              </button>
+              {/* Month selector (all users) */}
+              <select
+                value={selectedMonth || 'current'}
+                onChange={(e) => {
+                  const newMonth = e.target.value === 'current' ? null : e.target.value;
+                  setSelectedMonth(newMonth);
+                  loadData(newMonth);
+                }}
+                className="bg-white/20 text-white text-xs rounded px-2 py-1 border border-white/30 focus:outline-none focus:ring-1 focus:ring-white/50"
+              >
+                <option value="current" className="text-gray-800">
+                  {new Date().toLocaleString('de-DE', { month: 'long' })}
+                </option>
+                {(() => {
+                  const now = new Date();
+                  // Vormonat für alle
+                  const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+                  const prevMonthKey = `${prevMonth.getFullYear()}-${String(prevMonth.getMonth() + 1).padStart(2, '0')}`;
+                  const prevMonthName = prevMonth.toLocaleString('de-DE', { month: 'long' });
+                  // Nächster Monat (nur Vorschau)
+                  const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+                  const nextMonthKey = `${nextMonth.getFullYear()}-${String(nextMonth.getMonth() + 1).padStart(2, '0')}`;
+                  const nextMonthName = nextMonth.toLocaleString('de-DE', { month: 'long' });
+                  return (
+                    <>
+                      <option value={prevMonthKey} className="text-gray-800">
+                        {prevMonthName}
+                      </option>
+                      {currentUser.role === 'leitung' && (
+                        <option value={nextMonthKey} className="text-gray-800">
+                          {nextMonthName} (Vorschau)
+                        </option>
+                      )}
+                    </>
+                  );
+                })()}
+              </select>
               {currentUser.role === 'leitung' && (
                 <>
                   <button
@@ -571,10 +854,63 @@ export default function Home() {
                   </button>
                 </>
               )}
-              {currentUser.role !== 'leitung' && <div className="w-8"></div>}
             </div>
           </div>
         </div>
+
+        {/* Error message for month not found */}
+        {monthError && (
+          <div className="bg-yellow-50 border-b border-yellow-200 px-4 py-2 max-w-lg mx-auto">
+            <div className="flex items-center gap-2 text-yellow-800 text-sm">
+              <span>⚠️</span>
+              <span>{monthError}</span>
+              <button
+                onClick={() => {
+                  setMonthError(null);
+                  setSelectedMonth(null);
+                  loadData(null);
+                }}
+                className="ml-auto text-yellow-600 hover:text-yellow-800 underline text-xs"
+              >
+                Zurück zum aktuellen Monat
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* B3: Hinweis bei vergangenen Monaten */}
+        {!isCurrentMonth && (
+          <div className="bg-yellow-50 border-b border-yellow-300 px-4 py-3 max-w-lg mx-auto">
+            <div className="flex items-center gap-2 text-yellow-800 text-sm font-medium">
+              <span>🔒</span>
+              <span>Dieser Monat ist abgeschlossen und kann nicht mehr bearbeitet werden.</span>
+            </div>
+          </div>
+        )}
+
+        {/* Phase 5: Vormonat-Saldo Anzeige */}
+        {vormonatSaldo?.[currentUser.name] && (() => {
+          const saldo = vormonatSaldo[currentUser.name];
+          const prevMonth = new Date();
+          prevMonth.setMonth(prevMonth.getMonth() - 1);
+          const monatName = prevMonth.toLocaleDateString('de-DE', { month: 'long' });
+          const isPositiv = saldo.saldo >= 0;
+
+          return (
+            <div className={`border-b px-4 py-2 max-w-lg mx-auto ${
+              isPositiv ? 'bg-green-50 border-green-200' : 'bg-orange-50 border-orange-200'
+            }`}>
+              <div className={`flex items-center justify-between text-sm ${
+                isPositiv ? 'text-green-800' : 'text-orange-800'
+              }`}>
+                <span>Übertrag {monatName}:</span>
+                <span className="font-semibold">
+                  {isPositiv ? '+' : ''}{saldo.saldo.toFixed(1)} Std
+                </span>
+              </div>
+            </div>
+          );
+        })()}
 
         {/* Wochen-Auswahl */}
         <div className="bg-white border-b sticky top-16 z-10">
@@ -595,111 +931,167 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Zusatzzeiten (Prep/Office Time) */}
-        {currentUser.canTrackPrepTime && (() => {
+        {/* M2: Tägliche Zusatzzeiten (Vorbereitung / Teamsitzung / Bürozeit) */}
+        {(currentUser.canTrackPrepTime || currentUser.role === 'leitung') && (() => {
           const now = new Date();
-          const monatKey = `${currentUser.name}-${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const currentMonatKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+          const displayMonat = selectedMonth || currentMonatKey;
+          const monatKey = `${currentUser.name}-${displayMonat}`;
+          const wochenName = aktuelleWoche?.name || 'KW';
 
-          // Get current values from state
           const currentZusatz = zusatzzeiten[monatKey] || {};
-          const vorbereitungTotal = (currentZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
-          const buerozeitTotal = (currentZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
 
-          const handleZusatzChange = (type, delta) => {
-            const today = new Date().toISOString().split('T')[0];
+          // Monatssummen
+          const monatsVorbereitung = (currentZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
+          const monatsTeamsitzung = (currentZusatz.teamsitzung || []).reduce((sum, e) => sum + e.stunden, 0);
+          const monatsBuerozeit = (currentZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
+
+          // Kategorien für diesen User (full Tailwind classes to avoid purge issues)
+          const kategorien = [];
+          if (currentUser.canTrackPrepTime) {
+            kategorien.push({ key: 'vorbereitung', label: 'Vorber.', activeClass: 'bg-emerald-50 border-emerald-200 text-emerald-700' });
+            kategorien.push({ key: 'teamsitzung', label: 'Team', activeClass: 'bg-blue-50 border-blue-200 text-blue-700' });
+          }
+          if (currentUser.role === 'leitung') {
+            kategorien.push({ key: 'buerozeit', label: 'Büro', activeClass: 'bg-purple-50 border-purple-200 text-purple-700' });
+          }
+
+          // Helper: Finde Eintrag für einen Tag
+          const getZusatzForDay = (type, tagDatum) => {
+            return (currentZusatz[type] || []).find(e => e.datum === tagDatum);
+          };
+
+          // Helper: Zusatzzeit für einen Tag ändern
+          const handleDailyZusatzChange = (type, tagDatum, delta) => {
             setZusatzzeiten(prev => {
               const current = prev[monatKey] || {};
               const entries = current[type] || [];
-
-              // Find existing entry for today
-              const todayIdx = entries.findIndex(e => e.datum === today);
+              const entryIdx = entries.findIndex(e => e.datum === tagDatum);
               let newEntries;
 
-              if (todayIdx >= 0) {
-                // Update existing entry
-                const newValue = Math.max(0, entries[todayIdx].stunden + delta);
+              if (entryIdx >= 0) {
+                const newValue = Math.max(0, entries[entryIdx].stunden + delta);
                 if (newValue === 0) {
-                  // Remove entry if 0
-                  newEntries = entries.filter((_, i) => i !== todayIdx);
+                  newEntries = entries.filter((_, i) => i !== entryIdx);
                 } else {
                   newEntries = entries.map((e, i) =>
-                    i === todayIdx ? { ...e, stunden: newValue, timestamp: new Date().toISOString() } : e
+                    i === entryIdx ? { ...e, stunden: newValue, timestamp: new Date().toISOString() } : e
                   );
                 }
               } else if (delta > 0) {
-                // Add new entry
-                newEntries = [...entries, { stunden: delta, datum: today, timestamp: new Date().toISOString() }];
+                newEntries = [...entries, {
+                  stunden: delta,
+                  datum: tagDatum,
+                  woche: wochenName,
+                  timestamp: new Date().toISOString()
+                }];
               } else {
                 newEntries = entries;
               }
 
-              return {
-                ...prev,
-                [monatKey]: {
-                  ...current,
-                  [type]: newEntries
-                }
-              };
+              return { ...prev, [monatKey]: { ...current, [type]: newEntries } };
+            });
+          };
+
+          // Helper: Von/Bis für Zusatzzeit setzen
+          const handleZusatzTime = (type, tagDatum, field, value) => {
+            setZusatzzeiten(prev => {
+              const current = prev[monatKey] || {};
+              const entries = current[type] || [];
+              const entryIdx = entries.findIndex(e => e.datum === tagDatum);
+
+              if (entryIdx >= 0) {
+                const newEntries = entries.map((e, i) =>
+                  i === entryIdx ? { ...e, [field]: value, timestamp: new Date().toISOString() } : e
+                );
+                return { ...prev, [monatKey]: { ...current, [type]: newEntries } };
+              }
+              return prev;
             });
           };
 
           return (
             <div className="bg-white border-b p-3 max-w-lg mx-auto">
               <div className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">
-                Zusatzzeiten diesen Monat
+                Zusatzzeiten {wochenName}
+                <span className="font-normal ml-2 text-gray-400">
+                  (Monat: {monatsVorbereitung.toFixed(1)}h V
+                  {monatsTeamsitzung > 0 ? ` + ${monatsTeamsitzung.toFixed(1)}h T` : ''}
+                  {currentUser.role === 'leitung' ? ` + ${monatsBuerozeit.toFixed(1)}h B` : ''})
+                </span>
               </div>
 
-              {/* Vor-/Nachbereitung */}
-              <div className="flex items-center justify-between py-2">
-                <div>
-                  <div className="text-sm font-medium text-gray-700">Vor-/Nachbereitung</div>
-                  <div className="text-xs text-gray-400">Gesamt: {vorbereitungTotal.toFixed(2)} Std</div>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => handleZusatzChange('vorbereitung', -STEPPER_STEP)}
-                    className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
-                  >
-                    −
-                  </button>
-                  <div className="min-w-[70px] h-10 rounded-lg bg-emerald-50 border border-emerald-200 flex items-center justify-center text-sm font-semibold text-emerald-700">
-                    {vorbereitungTotal.toFixed(2)}
-                  </div>
-                  <button
-                    onClick={() => handleZusatzChange('vorbereitung', STEPPER_STEP)}
-                    className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
-                  >
-                    +
-                  </button>
-                </div>
-              </div>
+              <div className="space-y-2">
+                {maTage.map((tag, tagIdx) => {
+                  const istAbwesend = ["K", "U", "KK", "KS", "F", "S"].includes(tag.status);
+                  if (istAbwesend && tag.sollStd === 0) return null;
+                  const tagDatum = tag.datum || `${wochenName}-${tagIdx}`;
 
-              {/* Bürozeit - nur für Leitung */}
-              {currentUser.role === 'leitung' && (
-                <div className="flex items-center justify-between py-2 border-t border-gray-100">
-                  <div>
-                    <div className="text-sm font-medium text-gray-700">Bürozeit / Leitungszeit</div>
-                    <div className="text-xs text-gray-400">Gesamt: {buerozeitTotal.toFixed(2)} Std</div>
-                  </div>
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => handleZusatzChange('buerozeit', -STEPPER_STEP)}
-                      className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
-                    >
-                      −
-                    </button>
-                    <div className="min-w-[70px] h-10 rounded-lg bg-purple-50 border border-purple-200 flex items-center justify-center text-sm font-semibold text-purple-700">
-                      {buerozeitTotal.toFixed(2)}
+                  // Hat dieser Tag irgendeine Zusatzzeit?
+                  const hasAnyZusatz = kategorien.some(k => getZusatzForDay(k.key, tagDatum)?.stunden > 0);
+
+                  return (
+                    <div key={tagIdx} className="border border-gray-100 rounded-lg p-2">
+                      <div className="text-xs font-medium text-gray-600 mb-1">{tag.tag} {tag.datum}</div>
+                      {kategorien.map(kat => {
+                        const entry = getZusatzForDay(kat.key, tagDatum);
+                        const value = entry?.stunden || 0;
+
+                        return (
+                          <div key={kat.key} className="flex items-center justify-between py-0.5">
+                            <span className="text-xs text-gray-500 w-14">{kat.label}</span>
+                            <div className="flex items-center gap-1">
+                              {isCurrentMonth ? (
+                                <>
+                                  <button
+                                    onClick={() => handleDailyZusatzChange(kat.key, tagDatum, -STEPPER_STEP)}
+                                    disabled={value === 0}
+                                    className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 text-sm font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center disabled:opacity-30"
+                                  >−</button>
+                                  <div className={`min-w-[45px] h-7 rounded border flex items-center justify-center text-xs font-semibold ${
+                                    value > 0 ? kat.activeClass : 'bg-gray-50 border-gray-200 text-gray-400'
+                                  }`}>
+                                    {value > 0 ? value.toFixed(2) : '—'}
+                                  </div>
+                                  <button
+                                    onClick={() => handleDailyZusatzChange(kat.key, tagDatum, STEPPER_STEP)}
+                                    className="w-7 h-7 rounded bg-gray-100 hover:bg-gray-200 text-sm font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center"
+                                  >+</button>
+                                </>
+                              ) : (
+                                <span className="text-xs text-gray-500 min-w-[45px] text-center">{value > 0 ? value.toFixed(2) : '—'}</span>
+                              )}
+                              {/* Von/Bis nur anzeigen wenn Stunden > 0 */}
+                              {value > 0 && isCurrentMonth && (
+                                <div className="flex items-center gap-0.5 ml-1">
+                                  <input
+                                    type="time"
+                                    value={entry?.von || ''}
+                                    onChange={(e) => handleZusatzTime(kat.key, tagDatum, 'von', e.target.value)}
+                                    className="w-[72px] h-7 text-xs border rounded px-1"
+                                    placeholder="von"
+                                  />
+                                  <span className="text-gray-400 text-xs">–</span>
+                                  <input
+                                    type="time"
+                                    value={entry?.bis || ''}
+                                    onChange={(e) => handleZusatzTime(kat.key, tagDatum, 'bis', e.target.value)}
+                                    className="w-[72px] h-7 text-xs border rounded px-1"
+                                    placeholder="bis"
+                                  />
+                                </div>
+                              )}
+                              {value > 0 && !isCurrentMonth && entry?.von && (
+                                <span className="text-xs text-gray-400 ml-1">{entry.von}–{entry.bis || '?'}</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
-                    <button
-                      onClick={() => handleZusatzChange('buerozeit', STEPPER_STEP)}
-                      className="w-10 h-10 rounded-lg bg-gray-100 hover:bg-gray-200 text-lg font-bold text-gray-600 transition-all active:scale-95"
-                    >
-                      +
-                    </button>
-                  </div>
-                </div>
-              )}
+                  );
+                })}
+              </div>
             </div>
           );
         })()}
@@ -710,6 +1102,8 @@ export default function Home() {
             const eintrag = getEintrag(idx);
             const istAbwesend = ["K", "U", "KK", "KS", "F", "S"].includes(tag.status);
             const keinDienst = !tag.sollStd || tag.sollStd === 0;
+            const vertretungKey = `${selectedWeek}-${idx}`;
+            const istVertretung = vertretungAktiv[vertretungKey];
 
             // Berechne Ist-Stunden für diesen Tag
             let tagesIst = tag.sollStd || 0;
@@ -722,7 +1116,7 @@ export default function Home() {
               <div
                 key={idx}
                 className={`bg-white rounded-xl shadow-sm overflow-hidden ${
-                  istAbwesend || keinDienst ? 'opacity-70' : ''
+                  istAbwesend || (keinDienst && !istVertretung) ? 'opacity-70' : ''
                 }`}
               >
                 <div className="p-3 border-b border-gray-50">
@@ -734,6 +1128,7 @@ export default function Home() {
                     <div className="flex items-center gap-2">
                       {eintrag && eintrag !== "0" && (
                         <>
+                          {isCurrentMonth && (
                           <button
                             onClick={() => clearEintrag(idx)}
                             className="text-gray-400 hover:text-gray-600 text-xs px-1"
@@ -741,6 +1136,7 @@ export default function Home() {
                           >
                             ✕
                           </button>
+                          )}
                           {(() => {
                             const statusOption = STATUS_OPTIONEN.find(o => o.value === eintrag);
                             if (statusOption) {
@@ -766,14 +1162,43 @@ export default function Home() {
                   </div>
 
                   {istAbwesend ? (
-                    <div className={`text-sm mt-1 ${tag.status === "K" ? "text-red-500" : tag.status === "F" || tag.status === "S" ? "text-teal-600" : "text-purple-500"}`}>
+                    <div className={`text-sm mt-1 ${tag.status === "K" || tag.status === "KS" || tag.status === "KK" ? "text-red-500" : tag.status === "F" || tag.status === "S" ? "text-teal-600" : "text-purple-500"}`}>
                       {tag.status === "K" ? "Krank (lt. Dienstplan)" :
+                       tag.status === "KS" ? "Krankschreibung (lt. Dienstplan)" :
+                       tag.status === "KK" ? "Kindkrankschreibung (lt. Dienstplan)" :
                        tag.status === "U" ? "Urlaub (lt. Dienstplan)" :
-                       tag.status === "F" ? "Fortbildung (lt. Dienstplan)" :
+                       tag.status === "F" ? `Fortbildung (lt. Dienstplan)${tag.sollStd > 0 ? ` • ${tag.sollStd} Std` : ''}` :
                        tag.status === "S" ? "Seminar (lt. Dienstplan)" : "Abwesend"}
                     </div>
-                  ) : keinDienst ? (
-                    <div className="text-sm text-gray-400 mt-1">— Kein Dienst geplant</div>
+                  ) : keinDienst && !istVertretung ? (
+                    <div className="text-sm text-gray-400 mt-1 flex items-center justify-between">
+                      <span>— Kein Dienst geplant</span>
+                      {isCurrentMonth && (
+                      <button
+                        onClick={() => setVertretungAktiv(prev => ({ ...prev, [vertretungKey]: true }))}
+                        className="px-2 py-1 bg-blue-100 text-blue-700 rounded-lg text-xs font-medium hover:bg-blue-200 transition-all"
+                      >
+                        Vertretung
+                      </button>
+                      )}
+                    </div>
+                  ) : keinDienst && istVertretung ? (
+                    <div className="text-sm text-blue-600 mt-1 flex items-center justify-between">
+                      <span>Vertretung</span>
+                      <button
+                        onClick={() => {
+                          setVertretungAktiv(prev => {
+                            const next = { ...prev };
+                            delete next[vertretungKey];
+                            return next;
+                          });
+                          clearEintrag(idx);
+                        }}
+                        className="text-gray-400 hover:text-gray-600 text-xs"
+                      >
+                        ✕ Abbrechen
+                      </button>
+                    </div>
                   ) : (
                     <div className="text-sm text-gray-500 mt-1 flex items-center justify-between">
                       <span>
@@ -788,9 +1213,9 @@ export default function Home() {
                   )}
                 </div>
 
-                {!istAbwesend && !keinDienst && (
+                {!istAbwesend && (!keinDienst || istVertretung) && (
                   <div className="p-2.5 bg-gray-50 space-y-2">
-                    {/* Stepper für Zeitabweichung */}
+                    {/* Stepper für Zeitabweichung (auch bei Vertretung) */}
                     <div className="flex items-center justify-center gap-2">
                       <button
                         onClick={() => {
@@ -800,7 +1225,8 @@ export default function Home() {
                           const newValue = Math.max(STEPPER_MIN, currentValue - STEPPER_STEP);
                           handleAbweichung(idx, newValue.toString());
                         }}
-                        className="w-12 h-12 rounded-xl bg-white border-2 border-gray-200 hover:border-gray-300 text-xl font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center"
+                        disabled={!isCurrentMonth}
+                        className="w-12 h-12 rounded-xl bg-white border-2 border-gray-200 hover:border-gray-300 text-xl font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         −
                       </button>
@@ -828,28 +1254,125 @@ export default function Home() {
                           const newValue = Math.min(STEPPER_MAX, currentValue + STEPPER_STEP);
                           handleAbweichung(idx, newValue.toString());
                         }}
-                        className="w-12 h-12 rounded-xl bg-white border-2 border-gray-200 hover:border-gray-300 text-xl font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center"
+                        disabled={!isCurrentMonth}
+                        className="w-12 h-12 rounded-xl bg-white border-2 border-gray-200 hover:border-gray-300 text-xl font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center disabled:opacity-40 disabled:cursor-not-allowed"
                       >
                         +
                       </button>
                     </div>
 
-                    {/* Status-Buttons */}
-                    <div className="flex flex-wrap justify-center gap-1.5">
-                      {STATUS_OPTIONEN.map((option) => (
-                        <button
-                          key={option.value}
-                          onClick={() => handleAbweichung(idx, option.value)}
-                          className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
-                            eintrag === option.value
-                              ? option.color + ' ring-2 ring-offset-1 ring-blue-400'
-                              : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
-                          }`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
+                    {/* M1: Pause-Stepper (nur bei ≥4.5h Soll oder wenn manuelle Pause gesetzt) */}
+                    {(tag.sollStd >= 4.5 || getPause(idx) !== undefined) && (() => {
+                      const pauseValue = getPause(idx);
+                      const isAuto = pauseValue === undefined;
+                      // Auto-Pause Anzeige: >6h (oder >4.5h bei Minderjährigen) = 30min
+                      let tagesStd = tag.sollStd;
+                      const eintragVal = getEintrag(idx);
+                      if (eintragVal && eintragVal !== "0" && !STATUS_OPTIONEN.find(o => o.value === eintragVal)) {
+                        tagesStd = tag.sollStd + (parseFloat(eintragVal) || 0);
+                      }
+                      const grenze = currentUser.isMinor ? 4.5 : 6;
+                      const autoPause = tagesStd > grenze ? 0.5 : 0;
+                      const displayPause = isAuto ? autoPause : pauseValue;
+                      const displayMin = Math.round(displayPause * 60);
+
+                      return (
+                        <div className="flex items-center justify-center gap-2 mt-1">
+                          <span className="text-xs text-gray-500 mr-1">Pause:</span>
+                          {isCurrentMonth ? (
+                            <>
+                              <button
+                                onClick={() => handlePauseChange(idx, -PAUSE_STEP)}
+                                disabled={!isCurrentMonth || (isAuto)}
+                                className="w-8 h-8 rounded-lg bg-white border border-gray-200 hover:border-gray-300 text-sm font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center disabled:opacity-30"
+                              >
+                                −
+                              </button>
+                              <button
+                                onClick={() => isAuto ? null : resetPauseToAuto(idx)}
+                                className={`min-w-[80px] h-8 rounded-lg border flex items-center justify-center text-xs font-medium cursor-pointer ${
+                                  isAuto
+                                    ? 'bg-gray-100 border-gray-200 text-gray-500'
+                                    : 'bg-amber-50 border-amber-300 text-amber-700'
+                                }`}
+                                title={isAuto ? 'Auto-Pause (§4 ArbZG)' : 'Klick für Auto'}
+                              >
+                                {isAuto ? `Auto ${displayMin}min` : `${displayMin} min`}
+                              </button>
+                              <button
+                                onClick={() => handlePauseChange(idx, PAUSE_STEP)}
+                                disabled={!isCurrentMonth}
+                                className="w-8 h-8 rounded-lg bg-white border border-gray-200 hover:border-gray-300 text-sm font-bold text-gray-600 transition-all active:scale-95 flex items-center justify-center disabled:opacity-30"
+                              >
+                                +
+                              </button>
+                            </>
+                          ) : (
+                            <span className="text-xs text-gray-500">{isAuto ? `Auto ${displayMin}min` : `${displayMin} min`}</span>
+                          )}
+                        </div>
+                      );
+                    })()}
+
+                    {/* Status-Buttons: Krank mit Sub-Auswahl — nur im aktuellen Monat */}
+                    {isCurrentMonth && (() => {
+                      const isKrankSelected = ["KS", "K", "KK"].includes(eintrag);
+                      const selectedKrank = KRANK_OPTIONEN.find(o => o.value === eintrag);
+                      const subMenuKey = `${selectedWeek}-${idx}`;
+                      const showSub = !!krankSubMenu[subMenuKey];
+
+                      return (
+                        <div className="flex flex-wrap justify-center gap-1.5">
+                          {showSub ? (
+                            // Sub-Auswahl: 3 Krank-Optionen + Schließen
+                            <>
+                              {KRANK_OPTIONEN.map(option => (
+                                <button
+                                  key={option.value}
+                                  onClick={() => {
+                                    handleAbweichung(idx, option.value);
+                                    setKrankSubMenu(prev => {
+                                      const next = { ...prev };
+                                      delete next[subMenuKey];
+                                      return next;
+                                    });
+                                  }}
+                                  className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                                    eintrag === option.value
+                                      ? option.color + ' ring-2 ring-offset-1 ring-blue-400'
+                                      : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                                  }`}
+                                >
+                                  {option.label}
+                                </button>
+                              ))}
+                              <button
+                                onClick={() => setKrankSubMenu(prev => {
+                                  const next = { ...prev };
+                                  delete next[subMenuKey];
+                                  return next;
+                                })}
+                                className="px-2 py-1.5 text-xs text-gray-400 hover:text-gray-600"
+                              >
+                                ✕
+                              </button>
+                            </>
+                          ) : (
+                            // Haupt-Button: "Krank ▾" oder ausgewählter Krank-Typ
+                            <button
+                              onClick={() => setKrankSubMenu(prev => ({ ...prev, [subMenuKey]: true }))}
+                              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all border ${
+                                isKrankSelected
+                                  ? (selectedKrank?.color || 'bg-red-100 text-red-700 border-red-300') + ' ring-2 ring-offset-1 ring-blue-400'
+                                  : 'bg-white text-gray-600 border-gray-200 hover:border-gray-300'
+                              }`}
+                            >
+                              {isKrankSelected ? (selectedKrank?.label || 'Krank') : 'Krank'} ▾
+                            </button>
+                          )}
+                        </div>
+                      );
+                    })()}
                   </div>
                 )}
               </div>
@@ -881,9 +1404,11 @@ export default function Home() {
             <div className="flex items-center gap-3">
               <button
                 onClick={speichern}
-                disabled={saving}
+                disabled={saving || !isCurrentMonth}
                 className={`flex-1 py-3 rounded-xl font-semibold text-white transition-all ${
-                  showSaveConfirm
+                  !isCurrentMonth
+                    ? 'bg-gray-300 cursor-not-allowed'
+                    : showSaveConfirm
                     ? 'bg-green-500'
                     : saveError
                     ? 'bg-red-500'
@@ -892,7 +1417,7 @@ export default function Home() {
                     : 'bg-blue-600 hover:bg-blue-700 active:scale-95'
                 }`}
               >
-                {showSaveConfirm ? '✓ Gespeichert!' : saveError ? saveError : saving ? 'Speichern...' : 'Speichern'}
+                {!isCurrentMonth ? 'Nur Ansicht' : showSaveConfirm ? '✓ Gespeichert!' : saveError ? saveError : saving ? 'Speichern...' : 'Speichern'}
               </button>
             </div>
 
@@ -979,7 +1504,7 @@ export default function Home() {
             if (istDienstplanAbwesend) {
               // Bei Abwesenheit lt. Dienstplan: Soll-Stunden = Ist-Stunden, keine Pause
               istGesamt += tag.sollStd;
-            } else if (["K", "U", "KK", "F"].includes(eintrag)) {
+            } else if (["K", "KS", "U", "KK", "F"].includes(eintrag)) {
               // Bei manuell eingetragener Abwesenheit: Soll-Stunden zählen, keine Pause
               istGesamt += tag.sollStd;
             } else {
@@ -995,14 +1520,15 @@ export default function Home() {
         });
       });
 
-      // Zusatzzeiten berechnen
+      // Zusatzzeiten berechnen (inkl. Teamsitzung)
       const zusatzKey = `${maName}-${monatKey}`;
       const maZusatz = zusatzzeiten[zusatzKey] || {};
       const vorbereitungTotal = (maZusatz.vorbereitung || []).reduce((sum, e) => sum + e.stunden, 0);
+      const teamsitzungTotal = (maZusatz.teamsitzung || []).reduce((sum, e) => sum + e.stunden, 0);
       const buerozeitTotal = (maZusatz.buerozeit || []).reduce((sum, e) => sum + e.stunden, 0);
-      const zusatzTotal = vorbereitungTotal + buerozeitTotal;
+      const zusatzTotal = vorbereitungTotal + teamsitzungTotal + buerozeitTotal;
 
-      return { sollGesamt, istGesamt, vorbereitungTotal, buerozeitTotal, zusatzTotal };
+      return { sollGesamt, istGesamt, vorbereitungTotal, teamsitzungTotal, buerozeitTotal, zusatzTotal };
     };
 
     return (
@@ -1037,9 +1563,12 @@ export default function Home() {
             <div className="divide-y">
               {dienstplan?.mitarbeiter?.map((ma) => {
                 const status = getStatus(ma.name);
-                const { sollGesamt, istGesamt, vorbereitungTotal, buerozeitTotal, zusatzTotal } = berechneMitarbeiterStunden(ma.name);
+                const { sollGesamt, istGesamt, vorbereitungTotal, teamsitzungTotal, buerozeitTotal, zusatzTotal } = berechneMitarbeiterStunden(ma.name);
                 const hasSubmission = submissions[`${ma.name}-${monatKey}`];
                 const gesamtMitZusatz = istGesamt + zusatzTotal;
+
+                // Phase 5: Vormonat-Saldo
+                const maSaldo = vormonatSaldo?.[ma.name];
 
                 return (
                   <div
@@ -1071,9 +1600,20 @@ export default function Home() {
                         )}
                       </div>
                     </div>
+                    {/* Phase 5: Vormonat-Saldo */}
+                    {maSaldo && (
+                      <div className={`mt-2 pt-2 border-t border-gray-100 text-xs flex justify-between ${
+                        maSaldo.saldo >= 0 ? 'text-green-600' : 'text-orange-600'
+                      }`}>
+                        <span>Übertrag Vormonat:</span>
+                        <span className="font-medium">
+                          {maSaldo.saldo >= 0 ? '+' : ''}{maSaldo.saldo.toFixed(1)} Std
+                        </span>
+                      </div>
+                    )}
                     {/* Zusatzzeiten Details */}
                     {zusatzTotal > 0 && (
-                      <div className="mt-2 pt-2 border-t border-gray-100 text-xs text-gray-500">
+                      <div className={`${maSaldo ? 'mt-1' : 'mt-2 pt-2 border-t border-gray-100'} text-xs text-gray-500`}>
                         <div className="flex justify-between">
                           <span>Arbeitszeit (ohne Zusatz):</span>
                           <span>{istGesamt.toFixed(1)} Std</span>
@@ -1082,6 +1622,12 @@ export default function Home() {
                           <div className="flex justify-between text-emerald-600">
                             <span>+ Vor-/Nachbereitung:</span>
                             <span>{vorbereitungTotal.toFixed(2)} Std</span>
+                          </div>
+                        )}
+                        {teamsitzungTotal > 0 && (
+                          <div className="flex justify-between text-blue-600">
+                            <span>+ Teamsitzung:</span>
+                            <span>{teamsitzungTotal.toFixed(2)} Std</span>
                           </div>
                         )}
                         {buerozeitTotal > 0 && (
@@ -1123,7 +1669,7 @@ export default function Home() {
                       if (istDienstplanAbwesend) {
                         // Bei Abwesenheit lt. Dienstplan: Soll-Stunden = Ist-Stunden, keine Pause
                         wochenIst += tag.sollStd;
-                      } else if (["K", "U", "KK", "F"].includes(eintrag)) {
+                      } else if (["K", "KS", "U", "KK", "F"].includes(eintrag)) {
                         // Bei manuell eingetragener Abwesenheit: Soll-Stunden zählen, keine Pause
                         wochenIst += tag.sollStd;
                       } else {
@@ -1373,7 +1919,7 @@ export default function Home() {
                 </div>
 
                 <div>
-                  <label className="text-sm text-gray-600 block mb-1">Standard-Stunden/Tag</label>
+                  <label className="text-sm text-gray-600 block mb-1">Tages-Stunden (für Urlaub)</label>
                   <input
                     type="number"
                     step="0.25"
@@ -1381,6 +1927,7 @@ export default function Home() {
                     className="w-full p-3 border rounded-xl"
                     id="edit-std"
                   />
+                  <p className="text-xs text-gray-400 mt-1">Wird bei Urlaubstagen automatisch eingetragen</p>
                 </div>
 
                 <div className="space-y-2">
@@ -1467,7 +2014,7 @@ export default function Home() {
                 </div>
 
                 <div>
-                  <label className="text-sm text-gray-600 block mb-1">Standard-Stunden/Tag</label>
+                  <label className="text-sm text-gray-600 block mb-1">Tages-Stunden (für Urlaub)</label>
                   <input
                     type="number"
                     step="0.25"
@@ -1475,6 +2022,7 @@ export default function Home() {
                     className="w-full p-3 border rounded-xl"
                     id="new-std"
                   />
+                  <p className="text-xs text-gray-400 mt-1">Wird bei Urlaubstagen automatisch eingetragen</p>
                 </div>
 
                 <div className="space-y-2">

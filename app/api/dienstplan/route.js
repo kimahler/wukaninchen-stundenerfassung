@@ -39,12 +39,23 @@ async function fetchStammdaten() {
   }
 }
 
-// Ermittle aktuellen Monat für Dateiname
-function getCurrentDienstplanFilename() {
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = String(now.getMonth() + 1).padStart(2, '0');
-  return `Dienstplan ${year}_${month}.ods`;
+// Ermittle Dienstplan-Dateiname für Jahr/Monat
+function getDienstplanFilename(year, month) {
+  return `Dienstplan ${year}_${String(month).padStart(2, '0')}.ods`;
+}
+
+// Deutsche Monatsnamen
+const MONATSNAMEN = [
+  'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+  'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
+];
+
+// Helper: Response mit Cache-Control Headers
+function jsonResponse(data, status = 200) {
+  const response = NextResponse.json(data, { status });
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  response.headers.set('Pragma', 'no-cache');
+  return response;
 }
 
 // Lade Datei von Nextcloud via WebDAV
@@ -66,7 +77,7 @@ async function fetchFromNextcloud(filename) {
 }
 
 // Parse ODS/XLSX Datei und extrahiere Dienstplan-Daten
-function parseDienstplan(buffer, stammdaten = null) {
+function parseDienstplan(buffer, stammdaten = null, targetYear = null, targetMonth = null) {
   const workbook = XLSX.read(buffer, { type: 'array' });
 
   const mitarbeiterMap = {};
@@ -148,7 +159,13 @@ function parseDienstplan(buffer, stammdaten = null) {
           const stdRaw = row[colStart + 2];
           
           // Prüfe auf Abwesenheitskürzel
-          const vonStr = String(vonRaw || '').trim().toUpperCase();
+          let vonStr = String(vonRaw || '').trim().toUpperCase();
+
+          // Phase 2.1: FoBi/Fortbildung normalisieren zu "F"
+          if (vonStr === 'FOBI' || vonStr === 'FORTBILDUNG') {
+            vonStr = 'F';
+          }
+
           if (['K', 'U', 'KS', 'KK', 'S', 'F'].includes(vonStr)) {
             // Bei Abwesenheit: Versuche trotzdem die Stunden zu lesen (falls vorhanden)
             // Oder prüfe, ob die "bis" Spalte die Stunden enthält (manche Formate)
@@ -158,6 +175,12 @@ function parseDienstplan(buffer, stammdaten = null) {
             } else if (bisRaw && typeof bisRaw === 'number' && bisRaw < 1) {
               // Manchmal stehen die Stunden im "bis" Feld als Dezimalzahl
               geplanteSollStd = bisRaw * 24;
+            }
+
+            // Phase 2.2: Bei Urlaub ohne Stunden → standardStunden aus Stammdaten
+            if (vonStr === 'U' && geplanteSollStd === 0) {
+              const maStamm = stammdatenMap[name];
+              geplanteSollStd = maStamm?.standardStunden || 6; // Fallback 6h
             }
 
             tage.push({
@@ -213,7 +236,27 @@ function parseDienstplan(buffer, stammdaten = null) {
           if (marker === 'Nest') { bereich = 'Nest'; break; }
         }
         
-        woche.tage[name] = tage;
+        // Merge-Logik: Wenn Mitarbeiter in mehreren Bereichen arbeitet (z.B. Edu),
+        // werden die Tage aus beiden Zeilen zusammengeführt
+        const existingTage = woche.tage[name];
+        if (!existingTage) {
+          woche.tage[name] = tage;
+        } else {
+          // Pro Tag: Nimm den Eintrag der Daten hat (sollStd > 0 oder von/bis gesetzt)
+          const mergedTage = existingTage.map((existingTag, idx) => {
+            const newTag = tage[idx];
+            const existingHasData = existingTag.sollStd > 0 || existingTag.von || existingTag.status;
+            const newHasData = newTag.sollStd > 0 || newTag.von || newTag.status;
+
+            // Wenn nur einer Daten hat, nimm diesen
+            if (newHasData && !existingHasData) {
+              return newTag;
+            }
+            // Sonst behalte den existierenden (inkl. Fall dass beide leer sind)
+            return existingTag;
+          });
+          woche.tage[name] = mergedTage;
+        }
 
         if (!mitarbeiterMap[name]) {
           // Verwende Stammdaten wenn vorhanden, sonst Fallback
@@ -228,51 +271,139 @@ function parseDienstplan(buffer, stammdaten = null) {
             pin: sd.pin || null  // PIN nur für Auth, nicht im Frontend anzeigen
           };
         }
+
+        // C1: Gesamtstd. Arbeitszeitnachweis aus Spalte 25 (nur im ersten KW-Sheet)
+        if (sheetIdx === 0 && row.length > 25) {
+          const gesamtStdRaw = row[25];
+          if (gesamtStdRaw !== undefined && gesamtStdRaw !== '' && gesamtStdRaw !== null) {
+            const gesamtStd = typeof gesamtStdRaw === 'number' ? gesamtStdRaw : parseFloat(String(gesamtStdRaw).replace(',', '.'));
+            if (!isNaN(gesamtStd) && gesamtStd > 0) {
+              mitarbeiterMap[name].gesamtStdArbeitszeitnachweis = gesamtStd;
+            }
+          }
+        }
       }
     });
     
     wochen.push(woche);
   });
   
+  // C4: Stammdaten-MAs einmergen die nicht im ODS vorkommen (z.B. Almuth)
+  if (stammdaten && stammdaten.mitarbeiter) {
+    Object.entries(stammdaten.mitarbeiter).forEach(([name, sd]) => {
+      if (sd.active !== false && !mitarbeiterMap[name]) {
+        mitarbeiterMap[name] = {
+          name,
+          bereich: sd.bereich || 'Unbekannt',
+          isMinor: sd.isMinor || false,
+          role: sd.role || 'mitarbeiter',
+          standardStunden: sd.standardStunden || 6,
+          canTrackPrepTime: sd.canTrackPrepTime !== false,
+          pin: sd.pin || null
+        };
+        // Leere Tage für alle Wochen erstellen
+        wochen.forEach(woche => {
+          if (!woche.tage[name]) {
+            // Parse Daten aus zeitraum
+            const wochenDaten = ['', '', '', '', ''];
+            const wMatch = woche.zeitraum?.match(/(\d{2})\.(\d{2})\.?(\d{2,4})?/);
+            if (wMatch) {
+              const sDay = parseInt(wMatch[1], 10);
+              const sMonth = parseInt(wMatch[2], 10);
+              const sYear = wMatch[3] ? (wMatch[3].length === 2 ? 2000 + parseInt(wMatch[3], 10) : parseInt(wMatch[3], 10)) : new Date().getFullYear();
+              for (let i = 0; i < 5; i++) {
+                const d = new Date(sYear, sMonth - 1, sDay + i);
+                wochenDaten[i] = `${String(d.getDate()).padStart(2, '0')}.${String(d.getMonth() + 1).padStart(2, '0')}.`;
+              }
+            }
+            woche.tage[name] = ['Mo', 'Di', 'Mi', 'Do', 'Fr'].map((tagName, i) => ({
+              tag: tagName,
+              datum: wochenDaten[i],
+              von: null,
+              bis: null,
+              sollStd: 0
+            }));
+          }
+        });
+      }
+    });
+  }
+
   // Konvertiere Map zu Array
   const mitarbeiter = Object.values(mitarbeiterMap);
-  
-  // Ermittle Monat/Jahr aus erstem Sheet
-  const firstSheet = workbook.SheetNames[0] || '';
+
+  // Verwende übergebenes Jahr/Monat oder aktuelles Datum
   const now = new Date();
-  
+  const year = targetYear || now.getFullYear();
+  const month = targetMonth || (now.getMonth() + 1);
+
   return {
-    monat: now.toLocaleString('de-DE', { month: 'long' }),
-    jahr: now.getFullYear(),
+    monat: MONATSNAMEN[month - 1],
+    jahr: year,
     mitarbeiter,
     wochen
   };
 }
 
-export async function GET() {
+export async function GET(request) {
   try {
+    // Parse optionalen Monat-Parameter (?month=2026-02)
+    const { searchParams } = new URL(request.url);
+    const monthParam = searchParams.get('month');
+
+    let targetYear, targetMonth;
+    const now = new Date();
+
+    if (monthParam && /^\d{4}-\d{2}$/.test(monthParam)) {
+      // Verwende angegebenen Monat
+      const [yearStr, monthStr] = monthParam.split('-');
+      targetYear = parseInt(yearStr, 10);
+      targetMonth = parseInt(monthStr, 10);
+    } else {
+      // Verwende aktuellen Monat
+      targetYear = now.getFullYear();
+      targetMonth = now.getMonth() + 1;
+    }
+
     // Prüfe ob Konfiguration vorhanden
     if (!NEXTCLOUD_USER || !NEXTCLOUD_PASS) {
       // Fallback: Demo-Daten zurückgeben
-      return NextResponse.json(getDemoData());
+      return jsonResponse(getDemoData());
     }
 
+    const filename = getDienstplanFilename(targetYear, targetMonth);
+
     // Lade Stammdaten und Dienstplan parallel
-    const [stammdaten, filename] = await Promise.all([
+    const [stammdaten, buffer] = await Promise.all([
       fetchStammdaten(),
-      Promise.resolve(getCurrentDienstplanFilename())
+      fetchFromNextcloud(filename).catch(err => {
+        // Datei nicht gefunden
+        if (err.message.includes('404')) {
+          return null;
+        }
+        throw err;
+      })
     ]);
 
-    const buffer = await fetchFromNextcloud(filename);
-    const dienstplan = parseDienstplan(buffer, stammdaten);
+    // Wenn Datei nicht existiert, Fehlermeldung zurückgeben
+    if (!buffer) {
+      return jsonResponse({
+        error: true,
+        message: `Dienstplan für ${MONATSNAMEN[targetMonth - 1]} ${targetYear} noch nicht vorhanden`,
+        monat: MONATSNAMEN[targetMonth - 1],
+        jahr: targetYear
+      }, 404);
+    }
 
-    return NextResponse.json(dienstplan);
+    const dienstplan = parseDienstplan(buffer, stammdaten, targetYear, targetMonth);
+
+    return jsonResponse(dienstplan);
 
   } catch (error) {
     console.error('Fehler beim Laden des Dienstplans:', error);
 
     // Bei Fehler: Demo-Daten zurückgeben
-    return NextResponse.json(getDemoData());
+    return jsonResponse(getDemoData());
   }
 }
 
