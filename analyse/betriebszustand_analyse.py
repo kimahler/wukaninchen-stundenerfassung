@@ -10,7 +10,7 @@ Zustandsmodell (beide Kitas, unabhängig klassifiziert):
   B = Intern kompensiert   – Ausfall intern ausgeglichen (≥ Komfortgrenze)
   C = Externe Vertretung   – externe/bezahlte Vertretung im Einsatz
   D = Gesetzl. Minimum     – FK-Zahl auf gesetzlichem Minimum (auto)
-  E = Eltern gebeten       – Eltern aktiv gebeten, Kinder zu Hause zu lassen (manuell)
+  E = Kinderzahlbegrenzung – Eltern aktiv gebeten, Kinder zu Hause zu lassen (manuell)
   F = Notbetreuung         – formale Notbetreuung (Dienstplan-Header oder manuell)
   G = Vollschließung       – Kita vollständig geschlossen (manuell)
   P = Geplant geschlossen  – Betriebsferien, Klausurtage (statisch)
@@ -69,7 +69,7 @@ ZUSTAND_FARBEN = {
     'B': '#a8d8a8',  # hellgrün
     'C': '#f39c12',  # gelb-orange
     'D': '#e67e22',  # orange
-    'E': '#fd79a8',  # rosa (manuell: Eltern gebeten)
+    'E': '#fd79a8',  # rosa (manuell: Kinderzahlbegrenzung)
     'F': '#e74c3c',  # rot (Notbetreuung)
     'G': '#7b241c',  # dunkelrot (Vollschließung)
     'P': '#b2bec3',  # hell-grau (geplante Schließung)
@@ -82,7 +82,7 @@ ZUSTAND_NAMEN = {
     'B': 'Intern kompensiert',
     'C': 'Externe Vertretung',
     'D': 'Minimalbetrieb',
-    'E': 'Eltern gebeten',
+    'E': 'Kinderzahlbegrenzung',
     'F': 'Notbetreuung',       # nur aus Signal-Annotation
     'G': 'Vollschließung',      # nur aus Signal-Annotation
     'P': 'Geplant geschlossen',

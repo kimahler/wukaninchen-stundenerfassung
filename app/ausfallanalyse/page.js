@@ -9,7 +9,7 @@ const FARBEN = {
 };
 const NAMEN = {
   A: 'Vollbetrieb', B: 'Intern kompensiert', C: 'Externe Vertretung',
-  D: 'Minimalbetrieb', E: 'Eltern gebeten', F: 'Notbetreuung',
+  D: 'Minimalbetrieb', E: 'Kinderzahlbegrenzung', F: 'Notbetreuung',
   G: 'Vollschließung', P: 'Geplant geschlossen',
   W: 'Feiertag', '?': 'Daten fehlen',
 };
@@ -176,7 +176,7 @@ function SummaryKarten({ tage }) {
     { z: 'B', label: 'Intern komp.' },
     { z: 'C', label: 'Externe Vertr.' },
     { z: 'D', label: 'Minimalbetrieb' },
-    { z: 'E', label: 'Eltern gebeten' },
+    { z: 'E', label: 'Kinderzahl-Begr.' },
     { z: 'F', label: 'Notbetreuung' },
     { z: 'G', label: 'Vollschließung' },
   ];
@@ -349,12 +349,6 @@ export default function AusfallanalysePage() {
               Haus
             </button>
           </div>
-          <Link
-            href="/ausfallanalyse/annotate"
-            className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors"
-          >
-            + Annotation
-          </Link>
           <button onClick={handleLogout} className="text-xs text-gray-400 hover:text-white transition-colors">
             Abmelden
           </button>
