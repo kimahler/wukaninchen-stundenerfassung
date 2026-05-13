@@ -1,0 +1,88 @@
+name: Ausfallanalyse aktualisieren
+
+on:
+  workflow_dispatch: {}          # Manuell per Klick in GitHub
+  schedule:
+    - cron: '0 4 1 * *'         # Automatisch: 1. jedes Monats um 04:00 UTC
+
+jobs:
+  analyse:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    env:
+      NC_URL:  ${{ secrets.NEXTCLOUD_URL }}
+      NC_USER: ${{ secrets.NEXTCLOUD_USER }}
+      NC_PASS: ${{ secrets.NEXTCLOUD_PASS }}
+      # Pfad zu den Dienstplänen auf Nextcloud (URL-kodiert)
+      DIENSTPLAN_NC_PATH: "03%20Kinderbetreuung/P%C3%A4dagogik/Dienstpl%C3%A4ne"
+      # Pfad zum Vertretungspool (anpassen falls abweichend)
+      VERTRETUNGSPOOL_NC_PATH: "03%20Kinderbetreuung/P%C3%A4dagogik/Dienstpl%C3%A4ne/Vertretungspool.ods"
+      # Ausgabe-Ordner auf Nextcloud
+      ANALYSE_NC_PATH: "03%20Kinderbetreuung/P%C3%A4dagogik/Ausfallsicherheit"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      # Ziel-Ordner auf Nextcloud anlegen (403/405 = existiert bereits → OK)
+      - name: Nextcloud-Ordner anlegen
+        run: |
+          curl -sf -u "$NC_USER:$NC_PASS" \
+            -X MKCOL \
+            "$NC_URL/remote.php/dav/files/$NC_USER/$ANALYSE_NC_PATH" \
+            || true
+
+      # Aktuelle Annotationen von Nextcloud holen (Fallback: Seed aus Repo)
+      - name: Annotationen laden
+        run: |
+          curl -sf -u "$NC_USER:$NC_PASS" \
+            "$NC_URL/remote.php/dav/files/$NC_USER/$ANALYSE_NC_PATH/manuelle_annotationen.json" \
+            -o analyse/manuelle_annotationen.json \
+            || echo "Kein Nextcloud-Stand vorhanden, nutze Seed aus Repo"
+
+      # Dienstplan-ODS herunterladen (alle Monate 2025 + 2026, fehlende überspringen)
+      - name: Dienstpläne herunterladen
+        run: |
+          for year in 2025 2026; do
+            for month in 01 02 03 04 05 06 07 08 09 10 11 12; do
+              curl -sf -u "$NC_USER:$NC_PASS" \
+                "$NC_URL/remote.php/dav/files/$NC_USER/$DIENSTPLAN_NC_PATH/Dienstplan%20${year}_${month}.ods" \
+                -o "/tmp/dienstplan_${year}_${month}.ods" \
+                || rm -f "/tmp/dienstplan_${year}_${month}.ods"
+            done
+          done
+          echo "Heruntergeladene Dienstpläne:"
+          ls /tmp/dienstplan_*.ods 2>/dev/null || echo "(keine)"
+
+      # Vertretungspool herunterladen
+      - name: Vertretungspool herunterladen
+        run: |
+          curl -sf -u "$NC_USER:$NC_PASS" \
+            "$NC_URL/remote.php/dav/files/$NC_USER/$VERTRETUNGSPOOL_NC_PATH" \
+            -o /tmp/vertretungspool.ods \
+            || echo "Vertretungspool nicht gefunden, wird übersprungen"
+
+      # Analyse ausführen
+      - name: Analyse ausführen
+        run: python3 analyse/betriebszustand_analyse.py
+
+      # Ergebnis auf Nextcloud hochladen
+      - name: Ergebnis auf Nextcloud hochladen
+        run: |
+          curl -sf -u "$NC_USER:$NC_PASS" \
+            -T analyse/betriebszustand_tage.json \
+            -H "Content-Type: application/json" \
+            "$NC_URL/remote.php/dav/files/$NC_USER/$ANALYSE_NC_PATH/betriebszustand_tage.json"
+          echo "Upload erfolgreich: betriebszustand_tage.json"
+
+      # Aktualisierte Annotationen zurückschreiben (falls durch Skript geändert)
+      - name: Annotationen zurückschreiben
+        run: |
+          curl -sf -u "$NC_USER:$NC_PASS" \
+            -T analyse/manuelle_annotationen.json \
+            -H "Content-Type: application/json" \
+            "$NC_URL/remote.php/dav/files/$NC_USER/$ANALYSE_NC_PATH/manuelle_annotationen.json"

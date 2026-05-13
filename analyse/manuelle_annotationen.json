@@ -1,0 +1,18 @@
+[
+  {"datum": "2025-01-08", "zustand": "E", "kommentar": "Notbetreuung Hauskita, Catharina krank, 16 Kinder max (KW 2, Rest der Woche)"},
+  {"datum": "2025-01-09", "zustand": "E", "kommentar": "Notbetreuung Hauskita, Folgetag KW 2"},
+  {"datum": "2025-01-10", "zustand": "E", "kommentar": "Notbetreuung Hauskita, Folgetag KW 2"},
+  {"datum": "2025-01-13", "zustand": "E", "kommentar": "Notbetreuung Hauskita, Edu + Ilai zu zweit (16 Kinder)"},
+  {"datum": "2025-01-15", "zustand": "D", "kommentar": "Catharina allein im Nest, Elterndienst ab 13h"},
+  {"datum": "2025-01-17", "zustand": "E", "kommentar": "Notbetreuung Freitag, Juli + Ilai zu zweit, keine Nest-Erzieherin"},
+  {"datum": "2025-08-12", "zustand": "E", "kommentar": "Zusammengelegte Betreuung Hauskita krankheitsbedingt"},
+  {"datum": "2025-08-14", "zustand": "E", "kommentar": "Notbetreuung, Catharina krank, max 12 Kinder, Eingewöhnungen pausiert"},
+  {"datum": "2025-11-24", "zustand": "D", "kommentar": "Eltern gebeten Kinder zu Hause zu lassen (kurzfristig)"},
+  {"datum": "2025-12-08", "zustand": "E", "kommentar": "Notbetreuung Mo 08.12., Berit einzige Fachkraft, viele Teammitglieder krank"},
+  {"datum": "2025-12-09", "zustand": "D", "kommentar": "Eltern nach Notbetreuung gebeten zu Hause zu bleiben"},
+  {"datum": "2025-12-10", "zustand": "D", "kommentar": "Reiner Vertretungstag (Catharina krank)"},
+  {"datum": "2025-12-13", "zustand": "D", "kommentar": "Eltern gebeten Di+Mi Kinder zu Hause zu lassen (nur Vertretung Di+Mi)"},
+  {"datum": "2025-12-16", "zustand": "D", "kommentar": "Reiner Vertretungstag, Eltern gebeten wenn möglich zu Hause zu lassen"},
+  {"datum": "2026-04-23", "zustand": "F", "kommentar": "Vollschließung krankheitsbedingt (Wald wie Haus), kein Notbetreuungsangebot"},
+  {"datum": "2026-04-24", "zustand": "F", "kommentar": "Vollschließung krankheitsbedingt (2. Tag)"}
+]
