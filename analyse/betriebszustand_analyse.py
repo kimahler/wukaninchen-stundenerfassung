@@ -53,10 +53,11 @@ VERTRETUNGSPOOL_EXTERN = {
 }
 
 # Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
-# Wald (Ü3, ~15 Kinder): 15 Kinder ÷ 10 Kinder/Stelle = 1,5 Stellen → Min. 2 FK; Komfort ≥ 3
+# Kinderzahlen verifiziert aus ÜbersichtKinderdaten.ods (Nextcloud, Sheet 2025-26)
+# Wald (Ü3, 20 Kinder): 20 ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK; Komfort ≥ 3
 FK_KOMFORT_MIN_WALD = 3
 FK_GESETZ_MIN_WALD  = 2
-# Haus (U3, ~10 Kinder): 10 Kinder ÷ 4,25 Kinder/Stelle = 2,35 Stellen → Min. 3 FK; Komfort ≥ 4
+# Haus (U3, 12 Kinder): 12 ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 FK; Komfort ≥ 4
 FK_KOMFORT_MIN_HAUS = 4
 FK_GESETZ_MIN_HAUS  = 3
 
@@ -77,15 +78,15 @@ ZUSTAND_FARBEN = {
 }
 
 ZUSTAND_NAMEN = {
-    'A': 'Normalbetrieb',
+    'A': 'Vollbetrieb',
     'B': 'Intern kompensiert',
     'C': 'Externe Vertretung',
-    'D': 'Gesetzl. Minimum',
+    'D': 'Minimalbetrieb',
     'E': 'Eltern gebeten',
-    'F': 'Notbetreuung',
-    'G': 'Vollschließung',
+    'F': 'Notbetreuung',       # nur aus Signal-Annotation
+    'G': 'Vollschließung',      # nur aus Signal-Annotation
     'P': 'Geplant geschlossen',
-    'W': 'Wochenende / Feiertag',
+    'W': 'Feiertag',
     '?': 'Daten fehlen',
 }
 
@@ -401,44 +402,36 @@ def klassifiziere_kita(fk_da, krank, vertretung_da, fk_komfort_min, fk_gesetz_mi
     """
     Klassifiziert eine einzelne Kita für einen Tag.
     Gibt (zustand, begruendung) zurück.
+
+    F und G werden NICHT auto-generiert — nur aus Signal-Annotationen.
+    Alle Tage ohne ausreichende FK-Zahl → D (Minimalbetrieb), solange kein Signal.
     """
-    n_fk   = len(fk_da)
+    n_fk    = len(fk_da)
     n_krank = len(krank)
     hat_ext = len(vertretung_da) > 0
 
-    # Notbetreuung aus Dienstplan-Header (auto-detektiert)
-    if notbetreuung_header and n_krank > 0:
-        return 'F', f'Notbetreuung laut Dienstplan-Header ({n_fk} FK, {n_krank} krank)'
-
-    # Externe Vertretung (immer C, egal wie viele eigene FK — muss vor Keine-Daten-Check stehen)
+    # Externe Vertretung (muss vor Keine-Daten-Check stehen)
     if hat_ext:
-        ext_str = ', '.join(vertretung_da)
-        return 'C', f'Externe Vertretung: {ext_str} ({n_fk} FK gesamt, {n_krank} krank)'
+        return 'C', f'Externe Vertretung im Einsatz ({n_fk} FK gesamt im Dienstplan)'
 
-    # Keine Daten (erst nach externem Check, damit reine Vertretungstage korrekt als C landen)
+    # Keine Daten
     if n_fk == 0 and n_krank == 0:
         return '?', 'Keine FK-Daten im Dienstplan'
 
-    # Komfortgrenze erfüllt
+    # Komfortgrenze erfüllt → A oder B
     if n_fk >= fk_komfort_min:
         if n_krank == 0:
-            return 'A', f'Normalbetrieb: {n_fk} FK anwesend'
-        krank_str = ', '.join(krank)
-        return 'B', f'Intern kompensiert: {n_fk} FK, {n_krank} krank ({krank_str})'
+            return 'A', f'Vollbetrieb: {n_fk} FK im Einsatz'
+        return 'B', f'Intern kompensiert: {n_fk} FK im Einsatz trotz {n_krank} Krankmeldung(en)'
 
-    # Gesetzliches Minimum erfüllt
-    if n_fk >= fk_gesetz_min:
-        krank_str = ', '.join(krank)
-        return 'D', f'Gesetzl. Minimum: {n_fk} FK, {n_krank} krank ({krank_str})'
-
-    # Unter gesetzlichem Minimum
+    # Unter Komfortgrenze (≥ gesetz_min oder darunter) → D
+    # F/G nur aus Signal — kein auto-Notbetreuung
     if n_fk > 0:
-        return 'F', f'Notbetreuung: nur {n_fk} FK (unter Mindestbesetzung), {n_krank} krank'
+        return 'D', f'Minimalbetrieb: {n_fk} FK im Einsatz (Komfortgrenze: {fk_komfort_min} FK), kein Signal über Notbetreuung'
 
-    # Null FK anwesend
+    # 0 FK aber Krankmeldungen im Dienstplan → Status unklar ohne Signal
     if n_krank > 0:
-        krank_str = ', '.join(krank)
-        return 'G', f'Keine FK anwesend ({n_krank} krank: {krank_str})'
+        return '?', f'0 FK im Dienstplan ({n_krank} Krankmeldung(en)) — kein Signal, Status unklar'
 
     return '?', 'Keine FK-Daten verfügbar'
 
