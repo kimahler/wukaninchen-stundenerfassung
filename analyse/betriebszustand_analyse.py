@@ -515,6 +515,10 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
             )
             v_haus = False
 
+        # Spätbetreuung sinnlos bei Vollschließung / geplantem Schließtag
+        if s_haus and z_haus in ('G', 'P', 'W'):
+            s_haus = False
+
         ergebnis[aktuell] = {
             'wald': {
                 'zustand': z_wald,
@@ -522,6 +526,7 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
                 'verifiziert': v_wald,
                 'spaetbetreuung_ausgefallen': False,  # Spätbetreuung nur in Hauskita
                 'n_fk': len(fk_wald),
+                'fk_namen': sorted(fk_wald),
             },
             'haus': {
                 'zustand': z_haus,
@@ -529,6 +534,7 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
                 'verifiziert': v_haus,
                 'spaetbetreuung_ausgefallen': s_haus,
                 'n_fk': len(fk_haus),
+                'fk_namen': sorted(fk_haus),
             },
         }
         aktuell += timedelta(days=1)
@@ -964,6 +970,7 @@ def main():
                         'verifiziert': v['wald']['verifiziert'],
                         'spaetbetreuung_ausgefallen': False,  # Spätbetreuung nur in Hauskita
                         'n_fk': v['wald'].get('n_fk'),
+                        'fk_namen': v['wald'].get('fk_namen', []),
                     },
                     'haus': {
                         'zustand': v['haus']['zustand'],
@@ -971,6 +978,7 @@ def main():
                         'verifiziert': v['haus']['verifiziert'],
                         'spaetbetreuung_ausgefallen': v['haus']['spaetbetreuung_ausgefallen'],
                         'n_fk': v['haus'].get('n_fk'),
+                        'fk_namen': v['haus'].get('fk_namen', []),
                     },
                 }
                 for d, v in sorted(tage.items())

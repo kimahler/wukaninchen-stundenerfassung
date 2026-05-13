@@ -35,6 +35,7 @@ function TagModal({ day, kita, fkMin, fkKomfortMin, onClose }) {
   const { date, info } = day;
   const z = info?.zustand || '?';
   const nFk = info?.n_fk;
+  const fkNamen = info?.fk_namen;
   const verifiziert = info?.verifiziert;
   const [y, mo, d] = date.split('-').map(Number);
   const wday = new Date(y, mo - 1, d).getDay();
@@ -89,14 +90,19 @@ function TagModal({ day, kita, fkMin, fkKomfortMin, onClose }) {
         </div>
 
         {fkStatus && (
-          <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 mb-3">{fkStatus}</div>
+          <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 mb-3">
+            <div>{fkStatus}</div>
+            {fkNamen && fkNamen.length > 0 && (
+              <div className="text-[11px] text-gray-400 mt-1">{fkNamen.join(', ')}</div>
+            )}
+          </div>
         )}
 
         <div className="text-[11px] text-gray-400 border-t border-gray-100 pt-3">
           <span className="font-medium text-gray-500">Quelle:</span>{' '}{quelle}
         </div>
 
-        {info?.spaetbetreuung_ausgefallen && (
+        {info?.spaetbetreuung_ausgefallen && !['G', 'P', 'W'].includes(z) && (
           <div className="text-xs text-orange-600 bg-orange-50 rounded-lg p-2 mt-3">
             Spätbetreuung ausgefallen (Hauskita 16:00–18:00 Uhr)
           </div>
@@ -139,7 +145,7 @@ function MonatKalender({ year, month, tage, fkMin, onDayClick }) {
         {showFkCount && (
           <span className="text-[7px] leading-none mt-0.5 opacity-80" style={{ color: textCol }}>{nFk}/{fkMin}</span>
         )}
-        {spaet && (
+        {spaet && !['G', 'P', 'W'].includes(z) && (
           <span
             className="absolute bottom-0.5 right-0.5"
             style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderBottom: '10px solid #e74c3c' }}
@@ -393,31 +399,6 @@ export default function AusfallanalysePage() {
                 Legende — Betriebszustände
               </div>
 
-              {/* Schwellenwerte-Box */}
-              <div className="bg-gray-50 rounded-lg p-3 mb-4 text-xs text-gray-600 space-y-1">
-                <div className="font-semibold text-gray-700 mb-1">
-                  Schwellenwerte — {kita === 'wald' ? 'Waldkita (Ü3, 20 Kinder)' : 'Hauskita / Nest (U3, 12 Kinder)'}
-                </div>
-                <div>
-                  <span className="font-medium">Komfortgrenze:</span>{' '}
-                  ≥{FK_KOMFORT_MIN[kita]} FK im Einsatz → A (kein Krank) oder B (mit Krank)
-                </div>
-                <div>
-                  <span className="font-medium">Gesetzl. Minimum:</span>{' '}
-                  ≥{FK_GESETZ_MIN[kita]} FK → D (Minimalbetrieb, gilt als Normalbetrieb)
-                </div>
-                <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-200 mt-1">
-                  §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12) ·{' '}
-                  {kita === 'wald'
-                    ? '20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK'
-                    : '12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 FK'}
-                  {' '}· Kinderzahl verifiziert aus Betreuungsübersicht 2025-26 (Nextcloud)
-                </div>
-                <div className="text-[10px] text-gray-400">
-                  Kalenderfeld: FK im Einsatz / Minimum (z.B. «2/2» = 2 FK, Minimum 2) · Klick auf Tag für Details
-                </div>
-              </div>
-
               <div className="space-y-2.5">
                 {[
                   {
@@ -519,6 +500,31 @@ export default function AusfallanalysePage() {
                     </div>
                   </div>
                 )}
+              </div>
+
+              {/* Schwellenwerte — am Ende der Legende */}
+              <div className="bg-gray-50 rounded-lg p-3 mt-4 text-xs text-gray-600 space-y-1">
+                <div className="font-semibold text-gray-700 mb-1">
+                  Schwellenwerte — {kita === 'wald' ? 'Waldkita (Ü3, 20 Kinder)' : 'Hauskita / Nest (U3, 12 Kinder)'}
+                </div>
+                <div>
+                  <span className="font-medium">Komfortgrenze:</span>{' '}
+                  ≥{FK_KOMFORT_MIN[kita]} FK im Einsatz → A (kein Krank) oder B (mit Krank)
+                </div>
+                <div>
+                  <span className="font-medium">Gesetzl. Minimum:</span>{' '}
+                  ≥{FK_GESETZ_MIN[kita]} FK → D (Minimalbetrieb, gilt als Normalbetrieb)
+                </div>
+                <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-200 mt-1">
+                  §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12) ·{' '}
+                  {kita === 'wald'
+                    ? '20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK'
+                    : '12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 FK'}
+                  {' '}· Kinderzahl verifiziert aus Betreuungsübersicht 2025-26 (Nextcloud)
+                </div>
+                <div className="text-[10px] text-gray-400">
+                  Kalenderfeld: FK im Einsatz / Minimum (z.B. «2/2» = 2 FK, Minimum 2) · Klick auf Tag für Details
+                </div>
               </div>
             </div>
           </>
