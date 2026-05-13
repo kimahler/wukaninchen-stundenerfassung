@@ -16,6 +16,7 @@ const MONAT_LANG = [
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
 const MONAT_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+const SIGNAL_START = '2025-04-01'; // Schraffierung nur vor diesem Datum (kein Signal-Coverage davor)
 
 function fmt(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -40,9 +41,10 @@ function MonatKalender({ year, month, tage }) {
     const textCol = z === 'G' ? '#fff' : z === 'F' ? '#fff' : 'rgba(0,0,0,0.65)';
     const spaet = info?.spaetbetreuung_ausgefallen;
     const verifiziert = info?.verifiziert ?? true;
-    const tip = `${d}.${month}.${year} – ${NAMEN[z] || z}${spaet ? ' · Spätbetreuung ⚠' : ''}${!verifiziert && z !== '?' && z !== 'P' ? ' · Nicht verifiziert' : ''}${info?.begruendung ? '\n' + info.begruendung : ''}`;
+    const tip = `${d}.${month}.${year} – ${NAMEN[z] || z}${spaet ? ' · Spätbetreuung ⚠' : ''}${key < SIGNAL_START && !verifiziert && z !== '?' && z !== 'P' && z !== 'W' ? ' · Nicht verifiziert' : ''}${info?.begruendung ? '\n' + info.begruendung : ''}`;
 
-    const cellStyle = (!verifiziert && z !== '?' && z !== 'P' && z !== 'W')
+    const showHatch = !verifiziert && key < SIGNAL_START && z !== '?' && z !== 'P' && z !== 'W';
+    const cellStyle = showHatch
       ? {
           backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,0.35) 0px, rgba(255,255,255,0.35) 2px, transparent 2px, transparent 6px)',
           backgroundColor: bg,
@@ -165,7 +167,7 @@ function VerlaufChart({ tage }) {
           responsive: true,
           maintainAspectRatio: false,
           plugins: {
-            legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
+            legend: { display: false },
             tooltip: {
               callbacks: {
                 title: ctx => `${labels[ctx[0].dataIndex]}`,
@@ -314,37 +316,57 @@ export default function AusfallanalysePage() {
             </div>
 
             <div className="bg-white rounded-xl p-4 shadow-sm">
-              <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Legende</div>
-              <div className="flex flex-wrap gap-x-4 gap-y-2">
-                {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'P'].map(z => (
-                  <div key={z} className="flex items-center gap-1.5 text-xs text-gray-600">
+              <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Legende — Betriebszustände</div>
+              <div className="space-y-2">
+                {[
+                  { z: 'A', desc: 'Alle geplanten Fachkräfte anwesend, kein Kranktag. Regulärer Betrieb ohne Einschränkungen.' },
+                  { z: 'B', desc: 'Mindestens eine FK ist krank, aber die Komfortgrenze (≥3 FK) ist durch anwesende Kolleg:innen gedeckt. Kein externer Einsatz nötig.' },
+                  { z: 'C', desc: 'Eine externe Vertretungskraft aus dem Vertretungspool ist im Einsatz. Reguläre Betreuung möglich, aber mit externer Unterstützung.' },
+                  { z: 'D', desc: 'FK-Zahl liegt genau auf dem gesetzlichen Minimum nach KitaG Brandenburg §10 (2 FK). Kein Puffer — jeder weitere Ausfall wäre kritisch.' },
+                  { z: 'E', desc: 'Eltern wurden aktiv gebeten, ihre Kinder wenn möglich zu Hause zu lassen. Manuell erfasst aus Signal-Nachrichten.' },
+                  { z: 'F', desc: 'Formale Notbetreuung: stark reduzierte Kapazität. Nur Kinder, für die keine andere Betreuung möglich ist. Aus Dienstplan-Header oder Signal.' },
+                  { z: 'G', desc: 'Kita vollständig geschlossen, auch für Notfälle. Manuell erfasst aus Signal-Nachrichten.' },
+                  { z: 'P', desc: 'Geplante Schließung: Betriebsferien, Klausurtage oder Brückentage. Aus dem Jahreskalender. Nicht in der Statistik gezählt.' },
+                  { z: 'W', desc: 'Samstag, Sonntag oder gesetzlicher Feiertag. Kein Betriebstag.' },
+                  { z: '?', desc: 'Kein Dienstplan-Eintrag für diesen Tag vorhanden — Zustand unbekannt. Passiert wenn die ODS-Datei fehlt oder noch nicht hochgeladen wurde.' },
+                ].map(({ z, desc }) => (
+                  <div key={z} className="flex items-start gap-2">
                     <div
-                      className="w-5 h-5 rounded flex items-center justify-center text-[9px] font-bold shrink-0"
-                      style={{ background: FARBEN[z], color: z === 'G' ? '#fff' : z === 'F' ? '#fff' : 'rgba(0,0,0,0.6)' }}
+                      className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5"
+                      style={{ background: FARBEN[z] || '#dfe6e9', color: z === 'G' ? '#fff' : z === 'F' ? '#fff' : 'rgba(0,0,0,0.65)' }}
                     >
                       {z}
                     </div>
-                    {NAMEN[z]}
+                    <div>
+                      <span className="text-xs font-semibold text-gray-700">{NAMEN[z] || z}</span>
+                      <span className="text-xs text-gray-500"> — {desc}</span>
+                    </div>
                   </div>
                 ))}
                 {/* Schraffierung */}
-                <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                <div className="flex items-start gap-2 pt-1 border-t border-gray-100">
                   <div
-                    className="w-5 h-5 rounded shrink-0"
+                    className="w-6 h-6 rounded shrink-0 mt-0.5"
                     style={{
                       backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,0.45) 0px, rgba(255,255,255,0.45) 2px, transparent 2px, transparent 6px)',
                       backgroundColor: FARBEN['B'],
                     }}
                   />
-                  Nicht gegen Signal verifiziert
+                  <div>
+                    <span className="text-xs font-semibold text-gray-700">Schraffierung</span>
+                    <span className="text-xs text-gray-500"> — Nur auto-klassifiziert aus Dienstplan (Jan–Mär 2025), noch nicht gegen Signal-Nachrichten verifiziert. Ab April 2025 liegen Signal-Daten vor — keine Schraffierung.</span>
+                  </div>
                 </div>
                 {/* Spätbetreuung — nur Wald */}
                 {kita === 'wald' && (
-                  <div className="flex items-center gap-1.5 text-xs text-gray-600">
-                    <div className="w-5 h-5 rounded bg-gray-100 flex items-end justify-end p-0.5 shrink-0">
+                  <div className="flex items-start gap-2">
+                    <div className="w-6 h-6 rounded bg-gray-100 flex items-end justify-end p-0.5 shrink-0 mt-0.5">
                       <span style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderBottom: '10px solid #e74c3c' }} />
                     </div>
-                    Spätbetreuung ausgefallen
+                    <div>
+                      <span className="text-xs font-semibold text-gray-700">Spätbetreuung ausgefallen</span>
+                      <span className="text-xs text-gray-500"> — Geplante Spätbetreuung in der Waldkita (16:00–18:00 Uhr) ist an diesem Tag ausgefallen. Nur bei Waldkita relevant, Hauskita hat keine Spätbetreuung.</span>
+                    </div>
                   </div>
                 )}
               </div>

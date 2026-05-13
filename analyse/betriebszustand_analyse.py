@@ -410,14 +410,14 @@ def klassifiziere_kita(fk_da, krank, vertretung_da, fk_komfort_min, fk_gesetz_mi
     if notbetreuung_header and n_krank > 0:
         return 'F', f'Notbetreuung laut Dienstplan-Header ({n_fk} FK, {n_krank} krank)'
 
-    # Keine Daten
-    if n_fk == 0 and n_krank == 0:
-        return '?', 'Keine FK-Daten im Dienstplan'
-
-    # Externe Vertretung (immer C, egal wie viele eigene FK)
+    # Externe Vertretung (immer C, egal wie viele eigene FK — muss vor Keine-Daten-Check stehen)
     if hat_ext:
         ext_str = ', '.join(vertretung_da)
         return 'C', f'Externe Vertretung: {ext_str} ({n_fk} FK gesamt, {n_krank} krank)'
+
+    # Keine Daten (erst nach externem Check, damit reine Vertretungstage korrekt als C landen)
+    if n_fk == 0 and n_krank == 0:
+        return '?', 'Keine FK-Daten im Dienstplan'
 
     # Komfortgrenze erfüllt
     if n_fk >= fk_komfort_min:
