@@ -57,7 +57,7 @@ function MonatKalender({ year, month, tage }) {
             style={{
               width: 0, height: 0,
               borderLeft: '10px solid transparent',
-              borderBottom: '10px solid #e67e22',
+              borderBottom: '10px solid #e74c3c',
             }}
           />
         )}
