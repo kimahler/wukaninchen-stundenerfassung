@@ -1,5 +1,5 @@
 'use client';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 const FARBEN = {
@@ -15,6 +15,7 @@ const MONAT_LANG = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
+const MONAT_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
 
 function fmt(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
@@ -22,11 +23,12 @@ function fmt(year, month, day) {
 
 function MonatKalender({ year, month, tage }) {
   const firstWeekday = new Date(year, month - 1, 1).getDay(); // 0=So
-  const moOffset = firstWeekday === 0 ? 6 : firstWeekday - 1; // Mo=0
+  // For a Mon–Fri-only grid: Sat/Sun → 0 offset (first work day is next Monday)
+  const moOffset = (firstWeekday === 0 || firstWeekday === 6) ? 0 : firstWeekday - 1;
   const daysInMonth = new Date(year, month, 0).getDate();
 
   const cells = [];
-  for (let i = 0; i < Math.min(moOffset, 4); i++) cells.push(<div key={`e${i}`} />);
+  for (let i = 0; i < moOffset; i++) cells.push(<div key={`e${i}`} />);
 
   for (let d = 1; d <= daysInMonth; d++) {
     const wday = new Date(year, month - 1, d).getDay();
@@ -79,26 +81,102 @@ function MonatKalender({ year, month, tage }) {
 }
 
 function SummaryKarten({ tage, year }) {
-  const counts = { E: 0, F: 0, D: 0, C: 0 };
+  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
   for (const [date, info] of Object.entries(tage || {})) {
     if (!date.startsWith(String(year))) continue;
     const z = info.zustand;
     if (counts[z] !== undefined) counts[z]++;
   }
   const karten = [
+    { z: 'A', label: 'Normalbetrieb' },
+    { z: 'B', label: 'Intern kompensiert' },
+    { z: 'C', label: 'Externe Vertretung' },
+    { z: 'D', label: 'Eltern gebeten' },
     { z: 'E', label: 'Notbetreuung' },
     { z: 'F', label: 'Vollschließung' },
-    { z: 'D', label: 'Eltern gebeten' },
-    { z: 'C', label: 'Externe Vertretung' },
   ];
   return (
-    <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
       {karten.map(({ z, label }) => (
         <div key={z} className="bg-white rounded-xl p-3 shadow-sm border-l-4" style={{ borderLeftColor: FARBEN[z] }}>
           <div className="text-2xl font-bold text-gray-800">{counts[z]}</div>
           <div className="text-xs text-gray-400 mt-0.5">{label}</div>
         </div>
       ))}
+    </div>
+  );
+}
+
+function VerlaufChart({ tage }) {
+  const canvasRef = useRef(null);
+  const chartRef = useRef(null);
+
+  useEffect(() => {
+    if (!tage || !canvasRef.current) return;
+
+    // Collect sorted month keys
+    const monthSet = new Set();
+    for (const d of Object.keys(tage)) monthSet.add(d.slice(0, 7));
+    const months = [...monthSet].sort();
+
+    const labels = months.map(m => {
+      const [y, mo] = m.split('-');
+      return `${MONAT_KURZ[parseInt(mo) - 1]} ${y.slice(2)}`;
+    });
+
+    const zustande = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const datasets = zustande.map(z => {
+      const data = months.map(m => {
+        let count = 0;
+        for (const [d, info] of Object.entries(tage)) {
+          if (d.startsWith(m) && info.zustand === z) count++;
+        }
+        return count;
+      });
+      return {
+        label: `${z} – ${NAMEN[z]}`,
+        data,
+        backgroundColor: FARBEN[z],
+        stack: 'stack',
+      };
+    });
+
+    import('chart.js').then(({ Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend }) => {
+      Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip, Legend);
+
+      if (chartRef.current) chartRef.current.destroy();
+      chartRef.current = new Chart(canvasRef.current, {
+        type: 'bar',
+        data: { labels, datasets },
+        options: {
+          responsive: true,
+          maintainAspectRatio: false,
+          plugins: {
+            legend: { position: 'bottom', labels: { boxWidth: 14, font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                title: ctx => `${labels[ctx[0].dataIndex]}`,
+                label: ctx => ` ${ctx.dataset.label}: ${ctx.parsed.y}`,
+              },
+            },
+          },
+          scales: {
+            x: { stacked: true, ticks: { font: { size: 10 } } },
+            y: { stacked: true, title: { display: true, text: 'Arbeitstage', font: { size: 11 } } },
+          },
+        },
+      });
+    });
+
+    return () => { if (chartRef.current) chartRef.current.destroy(); };
+  }, [tage]);
+
+  return (
+    <div className="bg-white rounded-xl p-4 shadow-sm">
+      <div className="text-sm font-semibold text-gray-600 mb-3">Verlauf nach Monat</div>
+      <div style={{ height: 280 }}>
+        <canvas ref={canvasRef} />
+      </div>
     </div>
   );
 }
@@ -133,7 +211,6 @@ export default function AusfallanalysePage() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
       <div className="bg-gray-800 text-white px-4 py-3 flex items-center justify-between sticky top-0 z-10 shadow">
         <div>
           <div className="font-semibold text-sm">Betriebszustand</div>
@@ -170,7 +247,8 @@ export default function AusfallanalysePage() {
           <>
             <SummaryKarten tage={tage} year={year} />
 
-            {/* Jahres-Tabs */}
+            <VerlaufChart tage={tage} />
+
             {jahre.length > 1 && (
               <div className="flex gap-2">
                 {jahre.map(y => (
@@ -189,14 +267,12 @@ export default function AusfallanalysePage() {
               </div>
             )}
 
-            {/* Kalender-Grid */}
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {monate.map(m => (
                 <MonatKalender key={m} year={year} month={m} tage={tage} />
               ))}
             </div>
 
-            {/* Legende */}
             <div className="bg-white rounded-xl p-4 shadow-sm">
               <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Legende</div>
               <div className="flex flex-wrap gap-x-4 gap-y-2">
