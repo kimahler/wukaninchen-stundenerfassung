@@ -233,7 +233,8 @@ def parse_personal_status(rows):
             else:
                 status = 'frei'
 
-            tage[tag] = {'status': status, 'std': std_num}
+            bis_val = cell(row, von_col + 1)
+            tage[tag] = {'status': status, 'std': std_num, 'bis': bis_val}
 
         personal.append({'name': name, 'gruppe': current_gruppe, 'tage': tage})
     return personal
@@ -286,13 +287,43 @@ def analyse_dienstplaene():
                     if status == 'K' and name in KERNTEAM_AKTIV:
                         kern_krank.append(name)
 
+                # Spätdienst: Personen mit bis-Zeit >= 16:00 und < 18:00
+                spaet_workers = []
+                for p in personal:
+                    bis = p['tage'].get(wt, {}).get('bis', '')
+                    if re.match(r'^\d{1,2}:\d{2}$', bis):
+                        h_b, m_b = map(int, bis.split(':'))
+                        total = h_b * 60 + m_b
+                        if 16 * 60 <= total < 18 * 60:
+                            spaet_workers.append(p['name'])
+
                 tage_info[arbeitstag] = {
                     'fk_arbeitend': fk_da,
                     'kernteam_krank': kern_krank,
                     'vertretung_da': vertretung_da,
                     'notbetreuung_header': hat_notbetreuung_header,
                     'monat': monat,
+                    'spaet_workers': spaet_workers,
                 }
+
+    # ── Wochenbasierte Spätbetreuungs-Auswertung ─────────────────────────────
+    # Mi (2) und Fr (4) haben strukturell keine Spätbetreuung → nie flaggen
+    KEIN_SPAET_WOCHENTAGE = {2, 4}
+    woche_hat_spaet = defaultdict(bool)
+    for d, info in tage_info.items():
+        montag_d = d - timedelta(days=d.weekday())
+        if info.get('spaet_workers'):
+            woche_hat_spaet[montag_d] = True
+
+    for d, info in tage_info.items():
+        montag_d = d - timedelta(days=d.weekday())
+        hat_coverage = bool(info.get('spaet_workers'))
+        woche_aktiv  = woche_hat_spaet.get(montag_d, False)
+        info['spaetbetreuung_ausgefallen'] = (
+            woche_aktiv and not hat_coverage and
+            d.weekday() not in KEIN_SPAET_WOCHENTAGE and
+            d not in SCHLIESSZEITEN  # Klausurtage / Betriebsferien nicht flaggen
+        )
 
     return tage_info
 
@@ -402,7 +433,9 @@ def klassifiziere_alle(tage_info, annotationen, pool_2026):
     aktuell = start
 
     while aktuell <= ende:
-        spaet = annotationen.get(aktuell, {}).get('spaetbetreuung_ausgefallen', False)
+        spaet_ann  = annotationen.get(aktuell, {}).get('spaetbetreuung_ausgefallen', False)
+        spaet_plan = tage_info.get(aktuell, {}).get('spaetbetreuung_ausgefallen', False)
+        spaet = spaet_ann or spaet_plan
         if aktuell.weekday() >= 5 or aktuell in FEIERTAGE:
             ergebnis[aktuell] = {'zustand': 'W', 'begruendung': 'Wochenende / Feiertag', 'spaetbetreuung_ausgefallen': spaet, 'details': {}}
         elif aktuell in SCHLIESSZEITEN:
