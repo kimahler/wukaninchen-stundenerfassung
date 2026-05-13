@@ -2,20 +2,23 @@
 """
 Betriebszustands-Analyse Wukaninchen Kita
 ==========================================
-Klassifiziert jeden Arbeitstag von Jan 2025 – Mai 2026 in einen von 6 Zuständen (A–F).
+Klassifiziert jeden Arbeitstag von Jan 2025 – Mai 2026 getrennt für
+Waldkita (Ü3) und Hauskita/Nest (U3) in einen von 7 Zuständen (A–G) + P.
 
-Zustandsmodell:
-  A = Normalbetrieb          – alle Kernteam-FK anwesend
-  B = Intern kompensiert     – 1-2 K-Tage, aber FK ≥ Komfortgrenze, kein externer Einsatz
-  C = Kostenintensiv/Grauzone – externe Vertretung bezahlt ODER FK auf gesetzlichem Minimum
-  D = Eltern gebeten         – Bedarf-1/2-System aktiv (manuelle Annotation)
-  E = Notbetreuung           – Formale Notbetreuung (manuelle Annotation)
-  F = Vollschließung         – Kita zu (manuelle Annotation)
+Zustandsmodell (beide Kitas, unabhängig klassifiziert):
+  A = Normalbetrieb        – Vollbesetzung, kein Kranktag
+  B = Intern kompensiert   – Ausfall intern ausgeglichen (≥ Komfortgrenze)
+  C = Externe Vertretung   – externe/bezahlte Vertretung im Einsatz
+  D = Gesetzl. Minimum     – FK-Zahl auf gesetzlichem Minimum (auto)
+  E = Eltern gebeten       – Eltern aktiv gebeten, Kinder zu Hause zu lassen (manuell)
+  F = Notbetreuung         – formale Notbetreuung (Dienstplan-Header oder manuell)
+  G = Vollschließung       – Kita vollständig geschlossen (manuell)
+  P = Geplant geschlossen  – Betriebsferien, Klausurtage (statisch)
 
 Datenquellen:
   1. Dienstplan ODS-Dateien (/tmp/dienstplan_YYYY_MM.ods)
   2. Vertretungspool ODS (/tmp/vertretungspool.ods)
-  3. Manuelle Annotationen (manuelle_annotationen.json)
+  3. Manuelle Annotationen (manuelle_annotationen.json, Feld kita: wald|haus|beide)
 """
 
 import json
@@ -38,48 +41,56 @@ DIENSTPLAN_MONATE = [
     '2026_01', '2026_02', '2026_03', '2026_04', '2026_05',
 ]
 
-# Qualifizierte Fachkräfte (können allein betreuen)
-FACHKRAEFTE = {
-    'Ilai', 'Edu', 'Juli', 'Myriam', 'Johanna',   # Ü3 Kernteam
-    'Alina', 'Berit', 'Catharina', 'Karo',          # Nest Kernteam
-    'Anne', 'Svea', 'Romane',                        # Qualifizierte Vertretungen
+# Fachkräfte pro Kita — bestimmt durch Dienstplan-Sektion (Ü3 / Nest)
+FACHKRAEFTE_WALD = {'Ilai', 'Edu', 'Juli', 'Myriam', 'Almuth', 'Johanna'}
+FACHKRAEFTE_HAUS = {'Alina', 'Berit', 'Catharina', 'Izabella', 'Olli', 'Karo'}
+FACHKRAEFTE = FACHKRAEFTE_WALD | FACHKRAEFTE_HAUS
+
+# Externe Vertretungen (bezahlte Einsätze → Zustand C)
+VERTRETUNGSPOOL_EXTERN = {
+    'Anne', 'Svea', 'Charlene', 'Lene', 'Jana', 'Sabine',
+    'Liu', 'Liu Ness', 'Mariella', 'Bianca', 'Nina', 'Romane',
 }
 
-# Kernteam (ohne Elternzeit-Personal für Ausfallzählung)
-KERNTEAM_AKTIV = {'Ilai', 'Edu', 'Juli', 'Myriam', 'Alina', 'Berit', 'Catharina'}
+# Schwellenwerte (KitaG Brandenburg §10)
+# Wald (Ü3, ~15 Kinder): 1 FK/12 Kinder → Minimum 2; Komfort ≥ 3
+FK_KOMFORT_MIN_WALD = 3
+FK_GESETZ_MIN_WALD  = 2
+# Haus (U3, ~10 Kinder): 1 FK/4-5 Kinder → Minimum 2-3; Komfort ≥ 3
+FK_KOMFORT_MIN_HAUS = 3
+FK_GESETZ_MIN_HAUS  = 2
 
-# Vertretungspool (externe, bezahlte Einsätze → C)
-VERTRETUNGSPOOL_EXTERN = {'Anne', 'Svea', 'Charlene', 'Lene', 'Jana', 'Sabine', 'Liu', 'Liu Ness', 'Mariella', 'Bianca', 'Nina'}
+# Mi (2) und Fr (4) haben strukturell keine Spätbetreuung → nie flaggen
+KEIN_SPAET_WOCHENTAGE = {2, 4}
 
-# Schwellenwerte (konfigurierbar)
-FK_KOMFORT_MIN = 4    # B: mind. 4 FK arbeitend → intern kompensierbar
-FK_GESETZ_MIN  = 3    # C: nur 3 FK → gesetzliches Minimum gerade erfüllt (Grauzone)
-                       # < 3 FK → ohne D/E/F-Override: C mit Warnung
-
-# Farbkodierung
 ZUSTAND_FARBEN = {
     'A': '#27ae60',  # grün
     'B': '#a8d8a8',  # hellgrün
     'C': '#f39c12',  # gelb-orange
     'D': '#e67e22',  # orange
-    'E': '#e74c3c',  # rot
-    'F': '#7b241c',  # dunkelrot
-    'G': '#b2bec3',  # hell-grau (geplante Schließung)
-    'W': '#dfe6e9',  # Wochenende/Feiertag
-    '?': '#95a5a6',  # unbekannt/fehlende Daten
+    'E': '#fd79a8',  # rosa (manuell: Eltern gebeten)
+    'F': '#e74c3c',  # rot (Notbetreuung)
+    'G': '#7b241c',  # dunkelrot (Vollschließung)
+    'P': '#b2bec3',  # hell-grau (geplante Schließung)
+    'W': '#dfe6e9',  # sehr hell (Wochenende/Feiertag)
+    '?': '#95a5a6',  # unbekannt
 }
 
 ZUSTAND_NAMEN = {
     'A': 'Normalbetrieb',
     'B': 'Intern kompensiert',
-    'C': 'Kostenintensiv / Grauzone',
-    'D': 'Eltern gebeten',
-    'E': 'Notbetreuung',
-    'F': 'Vollschließung',
-    'G': 'Geplante Schließung',
+    'C': 'Externe Vertretung',
+    'D': 'Gesetzl. Minimum',
+    'E': 'Eltern gebeten',
+    'F': 'Notbetreuung',
+    'G': 'Vollschließung',
+    'P': 'Geplant geschlossen',
     'W': 'Wochenende / Feiertag',
     '?': 'Daten fehlen',
 }
+
+# Schweregrade für Diagnose-Ausgabe (höherer Wert = kritischer)
+SCHWERE = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'P': 0, 'W': 0, '?': 0}
 
 # Brandenburg Feiertage 2025/2026
 FEIERTAGE = {
@@ -88,16 +99,14 @@ FEIERTAGE = {
     date(2025, 10, 3), date(2025, 10, 31),
     date(2025, 12, 25), date(2025, 12, 26),
     date(2026, 1, 1), date(2026, 4, 3), date(2026, 4, 6),
-    date(2026, 5, 1), date(2026, 5, 14), date(2026, 5, 25),  # Christi Himmelfahrt + Pfingstmontag
+    date(2026, 5, 1), date(2026, 5, 14), date(2026, 5, 25),
 }
 
-# Geplante Schließzeiten laut Jahreskalender 2025/26 (aus Nextcloud)
-# Quelle: 03 Kinderbetreuung/Elternvertretung/Jahreskalender 2025-26 Vorschlag CR.ods
+# Geplante Schließzeiten (P) — aus Jahreskalender 2025/26 (Nextcloud)
 SCHLIESSZEITEN = {
-    # Weihnachtsschließzeit 2024/25 (inferred — kein separater Jahreskalender vorhanden)
-    date(2025, 1, 2): 'Weihnachtsschließzeit 2024/25',
-    date(2025, 1, 3): 'Weihnachtsschließzeit 2024/25',
-    # Sommerschließzeit 2025: 18.08.–05.09.2025 (15 Arbeitstage)
+    date(2025, 1, 2):  'Weihnachtsschließzeit 2024/25',
+    date(2025, 1, 3):  'Weihnachtsschließzeit 2024/25',
+    # Sommerschließzeit 2025: 18.08.–05.09.2025
     date(2025, 8, 18): 'Sommerschließzeit 2025',
     date(2025, 8, 19): 'Sommerschließzeit 2025',
     date(2025, 8, 20): 'Sommerschließzeit 2025',
@@ -113,10 +122,10 @@ SCHLIESSZEITEN = {
     date(2025, 9, 3):  'Sommerschließzeit 2025',
     date(2025, 9, 4):  'Sommerschließzeit 2025',
     date(2025, 9, 5):  'Sommerschließzeit 2025',
-    # Klausurtage Oktober 2025: 20.–21.10.2025 (Kita zu)
+    # Klausurtage Oktober 2025
     date(2025, 10, 20): 'Klausurtage Oktober 2025',
     date(2025, 10, 21): 'Klausurtage Oktober 2025',
-    # Weihnachtsschließzeit 2025/26: 22.12.2025–02.01.2026 (7 Arbeitstage; 25/26 Dez + 1 Jan = Feiertage)
+    # Weihnachtsschließzeit 2025/26: 22.12.2025–02.01.2026
     date(2025, 12, 22): 'Weihnachtsschließzeit 2025/26',
     date(2025, 12, 23): 'Weihnachtsschließzeit 2025/26',
     date(2025, 12, 24): 'Weihnachtsschließzeit 2025/26',
@@ -124,10 +133,10 @@ SCHLIESSZEITEN = {
     date(2025, 12, 30): 'Weihnachtsschließzeit 2025/26',
     date(2025, 12, 31): 'Weihnachtsschließzeit 2025/26',
     date(2026, 1, 2):  'Weihnachtsschließzeit 2025/26',
-    # Klausurtage Februar 2026: 05.–06.02.2026 (Kita zu)
-    date(2026, 2, 5): 'Klausurtage Februar 2026',
-    date(2026, 2, 6): 'Klausurtage Februar 2026',
-    # Brückentag nach Christi Himmelfahrt: 15.05.2026
+    # Klausurtage Februar 2026
+    date(2026, 2, 5):  'Klausurtage Februar 2026',
+    date(2026, 2, 6):  'Klausurtage Februar 2026',
+    # Brückentag nach Christi Himmelfahrt
     date(2026, 5, 15): 'Brückentag (Christi Himmelfahrt)',
 }
 
@@ -173,19 +182,16 @@ WOCHENTAGE = ['Mo', 'Di', 'Mi', 'Do', 'Fr']
 def parse_woche_datum(rows):
     """Extrahiert das Montags-Datum der Woche aus dem Sheet-Header."""
     header = cell(rows[0], 0) if rows else ''
-    # Format: "Dienstplan 06.01.-10.01.2025" oder "Dienstplan 02.01.-06.01.2025"
     m = re.search(r'(\d{2})\.(\d{2})\.-\d{2}\.\d{2}\.(\d{4})', header)
     if m:
         try:
             return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
         except ValueError:
             pass
-    # Fallback: suche nach einzelnem Datum
     m2 = re.search(r'(\d{2})\.(\d{2})\.(\d{4})', header)
     if m2:
         try:
             d = date(int(m2.group(3)), int(m2.group(2)), int(m2.group(1)))
-            # Auf Montag zurücksetzen
             return d - timedelta(days=d.weekday())
         except ValueError:
             pass
@@ -194,7 +200,8 @@ def parse_woche_datum(rows):
 
 def parse_personal_status(rows):
     """
-    Gibt zurück: Liste von {name, gruppe, tage: {Mo: {status, std}, ...}}
+    Gibt zurück: [{name, gruppe, tage: {Mo: {status, std, bis}, ...}}]
+    gruppe: 'Ü3' | 'Nest' | 'Weiteres'
     status: 'work' | 'K' | 'U' | 'FoBi' | 'frei'
     """
     current_gruppe = 'Ü3'
@@ -242,8 +249,14 @@ def parse_personal_status(rows):
 
 def analyse_dienstplaene():
     """
-    Gibt zurück: {date → {fk_arbeitend: [namen], kernteam_krank: [namen],
-                           vertretung_da: [namen], notbetreuung_header: bool}}
+    Gibt zurück: {date → {
+      'wald': {'fk_da': [...], 'krank': [...], 'vertretung_da': [...]},
+      'haus': {'fk_da': [...], 'krank': [...], 'vertretung_da': [...]},
+      'notbetreuung_header': bool,
+      'monat': str,
+      'spaet_workers_wald': [...],
+      'spaetbetreuung_ausgefallen': bool,  ← gesetzt nach Post-Processing
+    }}
     """
     tage_info = {}
 
@@ -258,11 +271,12 @@ def analyse_dienstplaene():
             if not montag:
                 continue
 
-            # Prüfe ob "Notbetreuung" im Header vorkommt
-            header_text = ' '.join(cell(rows[i], j)
-                                   for i in range(4)
-                                   for j in range(25)
-                                   if i < len(rows) and j < len(rows[i]))
+            header_text = ' '.join(
+                cell(rows[i], j)
+                for i in range(4)
+                for j in range(25)
+                if i < len(rows) and j < len(rows[i])
+            )
             hat_notbetreuung_header = 'Notbetreuung' in header_text
 
             personal = parse_personal_status(rows)
@@ -272,64 +286,74 @@ def analyse_dienstplaene():
                 if arbeitstag in FEIERTAGE:
                     continue
 
-                fk_da = []
-                kern_krank = []
-                vertretung_da = []
+                fk_wald, fk_haus = [], []
+                krank_wald, krank_haus = [], []
+                vert_wald, vert_haus = [], []
+                spaet_wald = []
 
                 for p in personal:
                     name = p['name']
-                    status = p['tage'].get(wt, {}).get('status', 'frei')
+                    gruppe = p['gruppe']
+                    t = p['tage'].get(wt, {})
+                    status = t.get('status', 'frei')
+                    bis = t.get('bis', '')
 
-                    if status == 'work' and name in FACHKRAEFTE:
-                        fk_da.append(name)
-                    if status == 'work' and name in VERTRETUNGSPOOL_EXTERN:
-                        vertretung_da.append(name)
-                    if status == 'K' and name in KERNTEAM_AKTIV:
-                        kern_krank.append(name)
+                    if status == 'work':
+                        # FK-Zählung nach Sektion
+                        if name in FACHKRAEFTE_WALD and gruppe == 'Ü3':
+                            fk_wald.append(name)
+                        if name in FACHKRAEFTE_HAUS and gruppe == 'Nest':
+                            fk_haus.append(name)
+                        # Externe Vertretungen nach Sektion
+                        if name in VERTRETUNGSPOOL_EXTERN:
+                            if gruppe == 'Ü3':
+                                vert_wald.append(name)
+                            elif gruppe == 'Nest':
+                                vert_haus.append(name)
+                        # Spätdienst: nur Wald-FK mit bis ≥ 16:00 und < 18:00
+                        if name in FACHKRAEFTE_WALD and gruppe == 'Ü3':
+                            if re.match(r'^\d{1,2}:\d{2}$', bis):
+                                h_b, m_b = map(int, bis.split(':'))
+                                total = h_b * 60 + m_b
+                                if 16 * 60 <= total < 18 * 60:
+                                    spaet_wald.append(name)
 
-                # Spätdienst: Personen mit bis-Zeit >= 16:00 und < 18:00
-                spaet_workers = []
-                for p in personal:
-                    bis = p['tage'].get(wt, {}).get('bis', '')
-                    if re.match(r'^\d{1,2}:\d{2}$', bis):
-                        h_b, m_b = map(int, bis.split(':'))
-                        total = h_b * 60 + m_b
-                        if 16 * 60 <= total < 18 * 60:
-                            spaet_workers.append(p['name'])
+                    elif status == 'K':
+                        if name in FACHKRAEFTE_WALD and gruppe == 'Ü3':
+                            krank_wald.append(name)
+                        if name in FACHKRAEFTE_HAUS and gruppe == 'Nest':
+                            krank_haus.append(name)
 
                 tage_info[arbeitstag] = {
-                    'fk_arbeitend': fk_da,
-                    'kernteam_krank': kern_krank,
-                    'vertretung_da': vertretung_da,
+                    'wald': {'fk_da': fk_wald, 'krank': krank_wald, 'vertretung_da': vert_wald},
+                    'haus': {'fk_da': fk_haus, 'krank': krank_haus, 'vertretung_da': vert_haus},
                     'notbetreuung_header': hat_notbetreuung_header,
                     'monat': monat,
-                    'spaet_workers': spaet_workers,
+                    'spaet_workers_wald': spaet_wald,
                 }
 
-    # ── Wochenbasierte Spätbetreuungs-Auswertung ─────────────────────────────
-    # Mi (2) und Fr (4) haben strukturell keine Spätbetreuung → nie flaggen
-    KEIN_SPAET_WOCHENTAGE = {2, 4}
+    # ── Wochenbasierte Spätbetreuungs-Auswertung (nur Waldkita) ─────────────
     woche_hat_spaet = defaultdict(bool)
     for d, info in tage_info.items():
         montag_d = d - timedelta(days=d.weekday())
-        if info.get('spaet_workers'):
+        if info.get('spaet_workers_wald'):
             woche_hat_spaet[montag_d] = True
 
     for d, info in tage_info.items():
         montag_d = d - timedelta(days=d.weekday())
-        hat_coverage = bool(info.get('spaet_workers'))
+        hat_coverage = bool(info.get('spaet_workers_wald'))
         woche_aktiv  = woche_hat_spaet.get(montag_d, False)
         info['spaetbetreuung_ausgefallen'] = (
-            woche_aktiv and not hat_coverage and
-            d.weekday() not in KEIN_SPAET_WOCHENTAGE and
-            d not in SCHLIESSZEITEN  # Klausurtage / Betriebsferien nicht flaggen
+            woche_aktiv and not hat_coverage
+            and d.weekday() not in KEIN_SPAET_WOCHENTAGE
+            and d not in SCHLIESSZEITEN
         )
 
     return tage_info
 
 
 def analyse_vertretungspool_2026():
-    """Gibt zurück: {date → [namen]} für konkrete Einsatzdaten in 2026."""
+    """Gibt zurück: {date → [namen]} für Einsatzdaten im Vertretungspool 2026."""
     fp = os.path.join(ODS_DIR, 'vertretungspool.ods')
     if not os.path.exists(fp):
         return {}
@@ -341,7 +365,6 @@ def analyse_vertretungspool_2026():
         if '2026' not in name or 'Stunden' not in name:
             continue
 
-        # Person-Spalten: Svea=0, Charlene=5, Anne=10, Jana=15
         person_cols = {}
         if rows:
             for idx, val in enumerate(rows[0]):
@@ -366,7 +389,7 @@ def analyse_vertretungspool_2026():
                         continue
                 except ValueError:
                     continue
-                if person in FACHKRAEFTE or person in VERTRETUNGSPOOL_EXTERN:
+                if person in VERTRETUNGSPOOL_EXTERN:
                     einsatz_tage[d].append(person)
 
     return dict(einsatz_tage)
@@ -374,83 +397,151 @@ def analyse_vertretungspool_2026():
 
 # ─── Klassifikation ───────────────────────────────────────────────────────────
 
-def klassifiziere_tag(tag, info, annotationen, pool_2026):
-    """Gibt (zustand, begruendung) zurück."""
-    # 1. Manuelle Override: F > E > D
-    if tag in annotationen:
-        ann = annotationen[tag]
-        return ann['zustand'], ann['kommentar']
+def klassifiziere_kita(fk_da, krank, vertretung_da, fk_komfort_min, fk_gesetz_min, notbetreuung_header=False):
+    """
+    Klassifiziert eine einzelne Kita für einen Tag.
+    Gibt (zustand, begruendung) zurück.
+    """
+    n_fk   = len(fk_da)
+    n_krank = len(krank)
+    hat_ext = len(vertretung_da) > 0
 
-    # 2. Notbetreuung im Dienstplan-Header
-    if info.get('notbetreuung_header') and info.get('kernteam_krank'):
-        return 'E', 'Notbetreuung laut Dienstplan-Header'
+    # Notbetreuung aus Dienstplan-Header (auto-detektiert)
+    if notbetreuung_header and n_krank > 0:
+        return 'F', f'Notbetreuung laut Dienstplan-Header ({n_fk} FK, {n_krank} krank)'
 
-    fk_da = info.get('fk_arbeitend', [])
-    kern_krank = info.get('kernteam_krank', [])
-    vertretung_da = info.get('vertretung_da', [])
+    # Keine Daten
+    if n_fk == 0 and n_krank == 0:
+        return '?', 'Keine FK-Daten im Dienstplan'
 
-    # Vertretungspool 2026 ergänzen
-    if tag in pool_2026:
-        for p in pool_2026[tag]:
-            if p not in fk_da and p in FACHKRAEFTE:
-                fk_da = fk_da + [p]
-            if p not in vertretung_da and p in VERTRETUNGSPOOL_EXTERN:
-                vertretung_da = vertretung_da + [p]
+    # Externe Vertretung (immer C, egal wie viele eigene FK)
+    if hat_ext:
+        ext_str = ', '.join(vertretung_da)
+        return 'C', f'Externe Vertretung: {ext_str} ({n_fk} FK gesamt, {n_krank} krank)'
 
-    n_fk = len(fk_da)
-    n_krank = len(kern_krank)
-    hat_externe = len(vertretung_da) > 0
+    # Komfortgrenze erfüllt
+    if n_fk >= fk_komfort_min:
+        if n_krank == 0:
+            return 'A', f'Normalbetrieb: {n_fk} FK anwesend'
+        krank_str = ', '.join(krank)
+        return 'B', f'Intern kompensiert: {n_fk} FK, {n_krank} krank ({krank_str})'
 
-    # 3. Klassifikation nach Fachkraft-Anzahl und externem Einsatz
-    if n_krank == 0 and n_fk >= FK_KOMFORT_MIN:
-        return 'A', f'Vollbesetzung: {n_fk} FK anwesend'
+    # Gesetzliches Minimum erfüllt
+    if n_fk >= fk_gesetz_min:
+        krank_str = ', '.join(krank)
+        return 'D', f'Gesetzl. Minimum: {n_fk} FK, {n_krank} krank ({krank_str})'
 
-    if hat_externe:
-        return 'C', f'Externe Vertretung: {", ".join(vertretung_da)} ({n_fk} FK gesamt, {n_krank} krank)'
-
-    if n_fk >= FK_KOMFORT_MIN:
-        return 'B', f'Intern kompensiert: {n_fk} FK anwesend, {n_krank} krank ({", ".join(kern_krank)})'
-
-    if n_fk >= FK_GESETZ_MIN:
-        return 'C', f'Grauzone: nur {n_fk} FK (gesetzl. Minimum), {n_krank} krank ({", ".join(kern_krank)})'
-
+    # Unter gesetzlichem Minimum
     if n_fk > 0:
-        return 'C', f'Kritisch: nur {n_fk} FK anwesend, {n_krank} krank ({", ".join(kern_krank)}) — mglw. unter Fachkraftschlüssel!'
+        return 'F', f'Notbetreuung: nur {n_fk} FK (unter Mindestbesetzung), {n_krank} krank'
 
+    # Null FK anwesend
     if n_krank > 0:
-        return 'C', f'Keine FK-Daten, aber {n_krank} Kernteam-Mitglieder krank'
+        krank_str = ', '.join(krank)
+        return 'G', f'Keine FK anwesend ({n_krank} krank: {krank_str})'
 
-    return 'A', 'Keine Auffälligkeiten in Daten'
+    return '?', 'Keine FK-Daten verfügbar'
 
 
-def klassifiziere_alle(tage_info, annotationen, pool_2026):
-    """Gibt {date → {zustand, begruendung, details}} zurück."""
+def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
+    """
+    Gibt {date → {
+      'wald': {zustand, begruendung, verifiziert, spaetbetreuung_ausgefallen},
+      'haus': {zustand, begruendung, verifiziert, spaetbetreuung_ausgefallen},
+    }} zurück.
+    """
     ergebnis = {}
-
-    # Zeitraum: Jan 2025 – Mai 2026
     start = date(2025, 1, 1)
-    ende = date(2026, 5, 31)
+    ende  = date(2026, 5, 31)
     aktuell = start
 
     while aktuell <= ende:
-        spaet_ann  = annotationen.get(aktuell, {}).get('spaetbetreuung_ausgefallen', False)
-        spaet_plan = tage_info.get(aktuell, {}).get('spaetbetreuung_ausgefallen', False)
-        spaet = spaet_ann or spaet_plan
+        # Wochenende / Feiertag
         if aktuell.weekday() >= 5 or aktuell in FEIERTAGE:
-            ergebnis[aktuell] = {'zustand': 'W', 'begruendung': 'Wochenende / Feiertag', 'spaetbetreuung_ausgefallen': spaet, 'details': {}}
-        elif aktuell in SCHLIESSZEITEN:
-            ergebnis[aktuell] = {'zustand': 'G', 'begruendung': SCHLIESSZEITEN[aktuell], 'spaetbetreuung_ausgefallen': spaet, 'details': {}}
-        elif aktuell not in tage_info:
-            ergebnis[aktuell] = {'zustand': '?', 'begruendung': 'Kein Dienstplan-Eintrag', 'spaetbetreuung_ausgefallen': spaet, 'details': {}}
+            sub = {'zustand': 'W', 'begruendung': 'Wochenende / Feiertag',
+                   'verifiziert': False, 'spaetbetreuung_ausgefallen': False}
+            ergebnis[aktuell] = {'wald': sub.copy(), 'haus': sub.copy()}
+            aktuell += timedelta(days=1)
+            continue
+
+        # Geplante Schließzeit
+        if aktuell in SCHLIESSZEITEN:
+            sub = {'zustand': 'P', 'begruendung': SCHLIESSZEITEN[aktuell],
+                   'verifiziert': False, 'spaetbetreuung_ausgefallen': False}
+            ergebnis[aktuell] = {'wald': sub.copy(), 'haus': sub.copy()}
+            aktuell += timedelta(days=1)
+            continue
+
+        # Kein Dienstplan-Eintrag
+        if aktuell not in tage_info:
+            sub = {'zustand': '?', 'begruendung': 'Kein Dienstplan-Eintrag',
+                   'verifiziert': False, 'spaetbetreuung_ausgefallen': False}
+            ergebnis[aktuell] = {'wald': sub.copy(), 'haus': sub.copy()}
+            aktuell += timedelta(days=1)
+            continue
+
+        info = tage_info[aktuell]
+        spaet_ausgefallen = info.get('spaetbetreuung_ausgefallen', False)
+        notbetreuung_hdr  = info.get('notbetreuung_header', False)
+
+        # Vertretungspool 2026 ergänzen (beide Kitas, da Kita unbekannt)
+        fk_wald  = list(info['wald']['fk_da'])
+        kr_wald  = list(info['wald']['krank'])
+        vt_wald  = list(info['wald']['vertretung_da'])
+        fk_haus  = list(info['haus']['fk_da'])
+        kr_haus  = list(info['haus']['krank'])
+        vt_haus  = list(info['haus']['vertretung_da'])
+
+        if aktuell in pool_2026:
+            for p in pool_2026[aktuell]:
+                if p in VERTRETUNGSPOOL_EXTERN:
+                    if p not in vt_wald:
+                        vt_wald.append(p)
+                    if p not in vt_haus:
+                        vt_haus.append(p)
+
+        # Waldkita klassifizieren
+        if aktuell in ann_wald and ann_wald[aktuell].get('zustand'):
+            ann_w = ann_wald[aktuell]
+            z_wald = ann_w['zustand']
+            b_wald = ann_w.get('kommentar', f'Manuelle Annotation: {z_wald}')
+            v_wald = True
+            s_wald = ann_w.get('spaetbetreuung_ausgefallen', spaet_ausgefallen)
         else:
-            info = tage_info[aktuell]
-            zustand, begruendung = klassifiziere_tag(aktuell, info, annotationen, pool_2026)
-            ergebnis[aktuell] = {
-                'zustand': zustand,
-                'begruendung': begruendung,
-                'spaetbetreuung_ausgefallen': spaet,
-                'details': info,
-            }
+            z_wald, b_wald = klassifiziere_kita(
+                fk_wald, kr_wald, vt_wald,
+                FK_KOMFORT_MIN_WALD, FK_GESETZ_MIN_WALD, notbetreuung_hdr,
+            )
+            v_wald = False
+            s_wald = spaet_ausgefallen
+
+        # Hauskita klassifizieren
+        if aktuell in ann_haus and ann_haus[aktuell].get('zustand'):
+            ann_h = ann_haus[aktuell]
+            z_haus = ann_h['zustand']
+            b_haus = ann_h.get('kommentar', f'Manuelle Annotation: {z_haus}')
+            v_haus = True
+        else:
+            z_haus, b_haus = klassifiziere_kita(
+                fk_haus, kr_haus, vt_haus,
+                FK_KOMFORT_MIN_HAUS, FK_GESETZ_MIN_HAUS, notbetreuung_hdr,
+            )
+            v_haus = False
+
+        ergebnis[aktuell] = {
+            'wald': {
+                'zustand': z_wald,
+                'begruendung': b_wald,
+                'verifiziert': v_wald,
+                'spaetbetreuung_ausgefallen': s_wald,
+            },
+            'haus': {
+                'zustand': z_haus,
+                'begruendung': b_haus,
+                'verifiziert': v_haus,
+                'spaetbetreuung_ausgefallen': False,  # Hauskita hat keine Spätbetreuung
+            },
+        }
         aktuell += timedelta(days=1)
 
     return ergebnis
@@ -458,13 +549,13 @@ def klassifiziere_alle(tage_info, annotationen, pool_2026):
 
 # ─── Statistiken ──────────────────────────────────────────────────────────────
 
-def berechne_statistiken(tage):
-    """Pro Monat und gesamt."""
-    gesamt = defaultdict(int)
+def berechne_statistiken(tage, kita='wald'):
+    """Pro Monat und gesamt, für eine Kita."""
+    gesamt    = defaultdict(int)
     pro_monat = defaultdict(lambda: defaultdict(int))
 
     for d, info in tage.items():
-        z = info['zustand']
+        z = info[kita]['zustand']
         gesamt[z] += 1
         monat_key = d.strftime('%Y-%m')
         pro_monat[monat_key][z] += 1
@@ -477,93 +568,91 @@ def berechne_statistiken(tage):
 MONAT_DE = {
     1: 'Januar', 2: 'Februar', 3: 'März', 4: 'April',
     5: 'Mai', 6: 'Juni', 7: 'Juli', 8: 'August',
-    9: 'September', 10: 'Oktober', 11: 'November', 12: 'Dezember'
+    9: 'September', 10: 'Oktober', 11: 'November', 12: 'Dezember',
 }
-
 WT_KURZ = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So']
 
 
-def render_kalender_monat(year, month, tage):
-    """Rendert einen Monats-Kalender als HTML-Grid."""
+def render_kalender_monat(year, month, tage_flat):
+    """Rendert einen Monats-Kalender für eine Kita (tage_flat: {date → kita-sub-dict})."""
     erster = date(year, month, 1)
-    if month == 12:
-        letzter = date(year + 1, 1, 1) - timedelta(days=1)
-    else:
-        letzter = date(year, month + 1, 1) - timedelta(days=1)
+    letzter = (date(year, month + 1, 1) if month < 12 else date(year + 1, 1, 1)) - timedelta(days=1)
 
-    # Wochentag-Header (nur Mo–Fr)
     html = f'<div class="monat-block"><h3>{MONAT_DE[month]} {year}</h3>'
     html += '<div class="kalender-grid">'
     for wt in ['Mo', 'Di', 'Mi', 'Do', 'Fr']:
         html += f'<div class="wt-header">{wt}</div>'
 
-    # Leere Felder vor dem ersten Tag
-    wt_erster = erster.weekday()  # 0=Mo
-    # Führende Leerzellen (nur wenn erster Tag nicht Montag ist)
-    fuer_ferien = min(wt_erster, 5)
-    for _ in range(fuer_ferien):
+    # Führende Leerzellen
+    wt_erster = erster.weekday()
+    for _ in range(min(wt_erster, 5)):
         html += '<div class="tag-zelle leer"></div>'
 
     aktuell = erster
     while aktuell <= letzter:
         wt = aktuell.weekday()
-        if wt >= 5:  # Sa/So überspringen im Grid
+        if wt >= 5:
             aktuell += timedelta(days=1)
             continue
 
-        info = tage.get(aktuell, {'zustand': '?', 'begruendung': 'Kein Eintrag'})
-        z = info['zustand']
+        info = tage_flat.get(aktuell)
+        if info is None:
+            info = {'zustand': '?', 'begruendung': 'Kein Eintrag', 'verifiziert': False}
+
+        z     = info.get('zustand', '?')
         farbe = ZUSTAND_FARBEN.get(z, '#ccc')
-        name = ZUSTAND_NAMEN.get(z, z)
+        name  = ZUSTAND_NAMEN.get(z, z)
+        verifiziert = info.get('verifiziert', False)
+        spaet = info.get('spaetbetreuung_ausgefallen', False)
+        begr  = info.get('begruendung', '')
 
-        details = info.get('details', {})
-        fk_namen = ', '.join(details.get('fk_arbeitend', [])) or '–'
-        krank_namen = ', '.join(details.get('kernteam_krank', [])) or '–'
-        vertretung_namen = ', '.join(details.get('vertretung_da', [])) or '–'
-        begruendung = info.get('begruendung', '')
+        tooltip = f'{aktuell.strftime("%d.%m.%Y")} ({WT_KURZ[wt]})&#10;{z}: {name}&#10;{begr}'
+        if not verifiziert and z not in ('W', 'P', '?'):
+            tooltip += '&#10;⚠ Nicht gegen Signal verifiziert'
+        if spaet:
+            tooltip += '&#10;⚠ Spätbetreuung ausgefallen'
 
-        tooltip_lines = [
-            f'{aktuell.strftime("%d.%m.%Y")} ({WT_KURZ[wt]})',
-            f'Zustand {z}: {name}',
-            f'→ {begruendung}',
-        ]
-        if fk_namen != '–':
-            tooltip_lines.append(f'FK anwesend: {fk_namen}')
-        if krank_namen != '–':
-            tooltip_lines.append(f'Krank: {krank_namen}')
-        if vertretung_namen != '–':
-            tooltip_lines.append(f'Vertretung: {vertretung_namen}')
-        tooltip = '&#10;'.join(tooltip_lines)
+        # Schraffierung für nicht-verifizierte Tage
+        hatch_style = ''
+        if not verifiziert and z not in ('W', 'P', '?'):
+            hatch_style = (
+                f'background-image: repeating-linear-gradient('
+                f'45deg, transparent, transparent 3px, rgba(255,255,255,0.45) 3px, rgba(255,255,255,0.45) 5px);'
+                f'background-color: {farbe};'
+            )
+        else:
+            hatch_style = f'background: {farbe};'
 
-        border_class = ' kritisch' if z in ('E', 'F') else ''
+        text_color = '#fff' if z in ('F', 'G') else 'rgba(0,0,0,0.65)'
+        border_class = ' kritisch' if z in ('F', 'G') else ''
+
         html += (
-            f'<div class="tag-zelle{border_class}" '
-            f'style="background:{farbe}" '
-            f'title="{tooltip}" '
-            f'data-zustand="{z}">'
-            f'<span class="tag-nr">{aktuell.day}</span>'
-            f'<span class="zustand-badge">{z}</span>'
-            f'</div>'
+            f'<div class="tag-zelle{border_class}" style="{hatch_style}" title="{tooltip}">'
+            f'<span class="tag-nr" style="color:{text_color}">{aktuell.day}</span>'
+            f'<span class="zustand-badge" style="color:{text_color}">{z}</span>'
         )
+        if spaet:
+            html += '<span class="spaet-dreieck"></span>'
+        html += '</div>'
         aktuell += timedelta(days=1)
 
     html += '</div></div>'
     return html
 
 
-def render_statistik_tabelle(gesamt, pro_monat):
+def render_statistik_tabelle(gesamt, pro_monat, kita_label):
     zustand_reihenfolge = ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']
-    operativ = ['A', 'B', 'C', 'D', 'E', 'F', '?']  # für Arbeitstage-Nenner (ohne G/W)
+    operativ = ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']
     monate = sorted(pro_monat.keys())
 
-    # Operative Arbeitstage gesamt (ohne W und G)
-    arbeitstage_gesamt = sum(v for k, v in gesamt.items() if k in operativ)
+    arbeitstage_gesamt = sum(v for k, v in gesamt.items() if k not in ('W', 'P'))
 
-    html = '<table class="stats-table"><thead><tr>'
+    html = f'<h3 style="margin-bottom:8px;font-size:14px">{kita_label}</h3>'
+    html += '<table class="stats-table"><thead><tr>'
     html += '<th>Monat</th>'
     for z in zustand_reihenfolge:
         farbe = ZUSTAND_FARBEN[z]
-        html += f'<th style="background:{farbe};color:{"#fff" if z in ("E","F") else "#222"}">{z}</th>'
+        html += f'<th style="background:{farbe};color:{"#fff" if z in ("F","G") else "#222"}">{z}</th>'
     html += '<th>Arbeitstage</th></tr></thead><tbody>'
 
     for monat_key in monate:
@@ -588,69 +677,71 @@ def render_statistik_tabelle(gesamt, pro_monat):
     return html
 
 
-def render_html(tage, gesamt, pro_monat):
-    """Rendert den vollständigen HTML-Report."""
+def render_html(tage, gesamt_wald, pm_wald, gesamt_haus, pm_haus):
+    """Rendert den vollständigen HTML-Report mit beiden Kitas."""
 
-    # Chart.js Daten
-    monate = sorted(pro_monat.keys())
+    # Flache Dicts für Kalender-Rendering
+    tage_wald = {d: info['wald'] for d, info in tage.items()}
+    tage_haus = {d: info['haus'] for d, info in tage.items()}
+
+    # Chart-Daten (Wald)
+    monate = sorted(pm_wald.keys())
     chart_labels = []
     for m in monate:
         p = m.split('-')
         chart_labels.append(f'{MONAT_DE[int(p[1])][:3]} {p[0][2:]}')
 
-    datasets = []
-    for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
-        farbe = ZUSTAND_FARBEN[z]
-        data = [pro_monat[m].get(z, 0) for m in monate]
-        datasets.append({
-            'label': f'{z} – {ZUSTAND_NAMEN[z]}',
-            'backgroundColor': farbe,
-            'data': data,
-        })
+    def make_datasets(pm):
+        datasets = []
+        for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
+            data = [pm.get(m, {}).get(z, 0) for m in monate]
+            if any(v > 0 for v in data):
+                datasets.append({
+                    'label': f'{z} – {ZUSTAND_NAMEN[z]}',
+                    'backgroundColor': ZUSTAND_FARBEN[z],
+                    'data': data,
+                    'stack': 'stack',
+                })
+        return datasets
 
-    chart_data_json = json.dumps({
-        'labels': chart_labels,
-        'datasets': datasets,
-    })
+    chart_wald_json = json.dumps({'labels': chart_labels, 'datasets': make_datasets(pm_wald)})
+    chart_haus_json = json.dumps({'labels': chart_labels, 'datasets': make_datasets(pm_haus)})
 
     # Kalender-Blöcke
-    kalender_html = ''
-    monate_liste = []
-    aktuell = date(2025, 1, 1)
-    while aktuell <= date(2026, 5, 31):
-        if (aktuell.year, aktuell.month) not in [(d.year, d.month) for d in [aktuell]
-                                                  if d not in monate_liste]:
-            monate_liste.append((aktuell.year, aktuell.month))
-        aktuell = (aktuell.replace(day=1) + timedelta(days=32)).replace(day=1)
+    def render_alle_monate(tage_flat):
+        html = ''
+        y, m = 2025, 1
+        while (y, m) <= (2026, 5):
+            html += render_kalender_monat(y, m, tage_flat)
+            m += 1
+            if m > 12:
+                m = 1
+                y += 1
+        return html
 
-    # Neu: Iteriere chronologisch durch Monate
-    y, m = 2025, 1
-    while (y, m) <= (2026, 5):
-        kalender_html += render_kalender_monat(y, m, tage)
-        m += 1
-        if m > 12:
-            m = 1
-            y += 1
+    kalender_wald = render_alle_monate(tage_wald)
+    kalender_haus = render_alle_monate(tage_haus)
 
+    # Statistik-Tabellen
+    stat_wald = render_statistik_tabelle(gesamt_wald, pm_wald, 'Waldkita (Ü3)')
+    stat_haus = render_statistik_tabelle(gesamt_haus, pm_haus, 'Hauskita / Nest (U3)')
+
+    # Legende
     legende_html = ''
     for z, name in ZUSTAND_NAMEN.items():
+        if z in ('W',):
+            continue
         farbe = ZUSTAND_FARBEN[z]
-        text_color = '#fff' if z in ('E', 'F') else '#222'
+        text_color = '#fff' if z in ('F', 'G') else '#222'
         legende_html += (
             f'<div class="legende-item">'
             f'<div class="legende-farbe" style="background:{farbe};color:{text_color}">{z}</div>'
-            f'<div class="legende-text"><strong>Zustand {z}</strong><br>{name}</div>'
+            f'<div class="legende-text"><strong>{z} – {name}</strong></div>'
             f'</div>'
         )
 
-    stat_tabelle = render_statistik_tabelle(gesamt, pro_monat)
-
-    arbeitstage_gesamt = sum(v for k, v in gesamt.items() if k != 'W')
-    n_e_f = gesamt.get('E', 0) + gesamt.get('F', 0)
-    n_d = gesamt.get('D', 0)
-    n_c = gesamt.get('C', 0)
-    n_b = gesamt.get('B', 0)
-    n_a = gesamt.get('A', 0)
+    arbeitstage_wald = sum(v for k, v in gesamt_wald.items() if k not in ('W', 'P'))
+    arbeitstage_haus = sum(v for k, v in gesamt_haus.items() if k not in ('W', 'P'))
 
     html = f"""<!DOCTYPE html>
 <html lang="de">
@@ -664,85 +755,57 @@ def render_html(tage, gesamt, pro_monat):
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
           background: #f8f9fa; color: #2c3e50; font-size: 14px; line-height: 1.5; }}
   .container {{ max-width: 1400px; margin: 0 auto; padding: 24px; }}
-
-  /* Header */
-  .report-header {{ background: #2c3e50; color: #fff; padding: 24px; border-radius: 8px;
-                    margin-bottom: 32px; }}
+  .report-header {{ background: #2c3e50; color: #fff; padding: 24px; border-radius: 8px; margin-bottom: 32px; }}
   .report-header h1 {{ font-size: 22px; font-weight: 600; margin-bottom: 6px; }}
   .report-header .meta {{ font-size: 13px; color: #95a5a6; }}
-
-  /* Summary Cards */
-  .summary-cards {{ display: flex; gap: 12px; margin-bottom: 32px; flex-wrap: wrap; }}
-  .card {{ background: #fff; border-radius: 8px; padding: 16px 20px;
-           box-shadow: 0 1px 4px rgba(0,0,0,.08); flex: 1; min-width: 140px; }}
-  .card .val {{ font-size: 32px; font-weight: 700; }}
-  .card .lbl {{ font-size: 12px; color: #7f8c8d; margin-top: 2px; }}
-  .card.red {{ border-left: 4px solid {ZUSTAND_FARBEN['F']}; }}
-  .card.orange {{ border-left: 4px solid {ZUSTAND_FARBEN['E']}; }}
-  .card.yellow {{ border-left: 4px solid {ZUSTAND_FARBEN['C']}; }}
-  .card.green {{ border-left: 4px solid {ZUSTAND_FARBEN['A']}; }}
-
-  /* Legende */
-  .legende {{ display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 32px; }}
-  .legende-item {{ display: flex; align-items: center; gap: 10px; background: #fff;
-                   padding: 10px 14px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }}
-  .legende-farbe {{ width: 36px; height: 36px; border-radius: 6px;
+  h2 {{ font-size: 17px; font-weight: 600; margin: 32px 0 12px; color: #2c3e50; }}
+  .kita-section {{ border: 1px solid #e0e0e0; border-radius: 10px; padding: 20px; margin-bottom: 32px; background: #fff; }}
+  .kita-label {{ font-size: 15px; font-weight: 700; margin-bottom: 16px; color: #2c3e50; }}
+  .legende {{ display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 32px; }}
+  .legende-item {{ display: flex; align-items: center; gap: 8px; background: #fff;
+                   padding: 8px 12px; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,.06); }}
+  .legende-farbe {{ width: 32px; height: 32px; border-radius: 5px;
                     display: flex; align-items: center; justify-content: center;
-                    font-weight: 700; font-size: 16px; flex-shrink: 0; }}
+                    font-weight: 700; font-size: 14px; flex-shrink: 0; }}
   .legende-text {{ font-size: 12px; }}
-  .legende-text strong {{ font-size: 13px; }}
-
-  /* Kalender */
-  h2 {{ font-size: 17px; font-weight: 600; margin-bottom: 16px; color: #2c3e50; }}
-  .kalender-container {{ display: flex; flex-wrap: wrap; gap: 20px; margin-bottom: 40px; }}
-  .monat-block {{ background: #fff; border-radius: 8px; padding: 14px 16px;
-                  box-shadow: 0 1px 4px rgba(0,0,0,.08); min-width: 280px; }}
-  .monat-block h3 {{ font-size: 13px; font-weight: 600; margin-bottom: 10px;
+  .kalender-container {{ display: flex; flex-wrap: wrap; gap: 16px; }}
+  .monat-block {{ background: #fff; border-radius: 8px; padding: 12px 14px;
+                  box-shadow: 0 1px 4px rgba(0,0,0,.08); min-width: 260px; }}
+  .monat-block h3 {{ font-size: 12px; font-weight: 600; margin-bottom: 8px;
                      color: #2c3e50; text-transform: uppercase; letter-spacing: .5px; }}
-  .kalender-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 3px; }}
-  .wt-header {{ text-align: center; font-size: 10px; color: #95a5a6;
-                font-weight: 600; padding: 2px 0; }}
-  .tag-zelle {{ border-radius: 4px; padding: 4px 2px; text-align: center;
-                cursor: default; position: relative; min-height: 34px;
+  .kalender-grid {{ display: grid; grid-template-columns: repeat(5, 1fr); gap: 2px; }}
+  .wt-header {{ text-align: center; font-size: 9px; color: #95a5a6; font-weight: 600; padding: 2px 0; }}
+  .tag-zelle {{ border-radius: 3px; padding: 3px 1px; text-align: center;
+                cursor: default; position: relative; min-height: 32px;
                 display: flex; flex-direction: column; align-items: center;
                 justify-content: center; transition: transform .1s; }}
-  .tag-zelle:hover {{ transform: scale(1.1); z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,.2); }}
+  .tag-zelle:hover {{ transform: scale(1.12); z-index: 10; box-shadow: 0 2px 8px rgba(0,0,0,.2); }}
   .tag-zelle.leer {{ background: transparent !important; }}
-  .tag-zelle.kritisch {{ box-shadow: inset 0 0 0 2px rgba(0,0,0,.3); }}
-  .tag-nr {{ font-size: 11px; font-weight: 600; color: rgba(0,0,0,.6); line-height: 1; }}
-  .zustand-badge {{ font-size: 9px; font-weight: 700; color: rgba(0,0,0,.45); }}
-
-  /* Chart */
-  .chart-container {{ background: #fff; border-radius: 8px; padding: 20px;
-                      box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 40px; }}
-  .chart-wrapper {{ max-height: 320px; }}
-
-  /* Tabelle */
-  .stats-table {{ width: 100%; border-collapse: collapse; font-size: 13px;
+  .tag-zelle.kritisch {{ box-shadow: inset 0 0 0 2px rgba(0,0,0,.25); }}
+  .tag-nr {{ font-size: 10px; font-weight: 600; line-height: 1; }}
+  .zustand-badge {{ font-size: 8px; font-weight: 700; }}
+  .spaet-dreieck {{ position: absolute; bottom: 1px; right: 1px;
+                    width: 0; height: 0;
+                    border-left: 8px solid transparent;
+                    border-bottom: 8px solid #e74c3c; }}
+  .chart-container {{ background: #fff; border-radius: 8px; padding: 16px;
+                      box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }}
+  .chart-container h4 {{ font-size: 13px; font-weight: 600; margin-bottom: 10px; color: #555; }}
+  .chart-wrapper {{ height: 260px; }}
+  .stats-table {{ width: 100%; border-collapse: collapse; font-size: 12px;
                   background: #fff; border-radius: 8px; overflow: hidden;
-                  box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 40px; }}
-  .stats-table th, .stats-table td {{ padding: 8px 12px; text-align: center; border-bottom: 1px solid #f0f0f0; }}
-  .stats-table th {{ background: #2c3e50; color: #fff; font-weight: 600; font-size: 12px; }}
+                  box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 24px; }}
+  .stats-table th, .stats-table td {{ padding: 6px 10px; text-align: center; border-bottom: 1px solid #f0f0f0; }}
+  .stats-table th {{ background: #2c3e50; color: #fff; font-weight: 600; font-size: 11px; }}
   .stats-table .monat-label {{ text-align: left; font-weight: 500; white-space: nowrap; }}
-  .stats-table td small {{ color: #95a5a6; font-size: 11px; }}
+  .stats-table td small {{ color: #95a5a6; font-size: 10px; }}
   .stats-table .gesamt-row {{ background: #f8f9fa; border-top: 2px solid #2c3e50; }}
   .stats-table tr:hover {{ background: #f8f9fa; }}
-
-  /* Erklärung */
-  .erklaerung {{ background: #fff; border-radius: 8px; padding: 20px 24px;
-                 box-shadow: 0 1px 4px rgba(0,0,0,.08); margin-bottom: 32px; }}
-  .erklaerung h3 {{ font-size: 14px; margin-bottom: 12px; }}
-  .erklaerung ul {{ list-style: none; }}
-  .erklaerung li {{ padding: 6px 0; border-bottom: 1px solid #f5f5f5; font-size: 13px; }}
-  .erklaerung li:last-child {{ border: none; }}
-  .badge {{ display: inline-block; width: 22px; height: 22px; border-radius: 4px;
-            text-align: center; line-height: 22px; font-weight: 700; font-size: 12px;
-            margin-right: 8px; }}
-
+  h3 {{ font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #2c3e50; }}
   @media print {{
     body {{ background: white; }}
     .container {{ max-width: none; padding: 12px; }}
-    .chart-container {{ break-inside: avoid; }}
+    .kita-section {{ break-inside: avoid; }}
     .monat-block {{ break-inside: avoid; }}
   }}
 </style>
@@ -752,94 +815,73 @@ def render_html(tage, gesamt, pro_monat):
 
 <div class="report-header">
   <h1>Betriebszustands-Analyse — Kita Wukaninchen</h1>
-  <div class="meta">Jan 2025 – Mai 2026 · {arbeitstage_gesamt} analysierte Arbeitstage · Erstellt {date.today().strftime("%d.%m.%Y")}</div>
-</div>
-
-<div class="summary-cards">
-  <div class="card green">
-    <div class="val">{n_a}</div>
-    <div class="lbl">Normalbetrieb (A)</div>
-  </div>
-  <div class="card">
-    <div class="val">{n_b}</div>
-    <div class="lbl">Intern kompensiert (B)</div>
-  </div>
-  <div class="card yellow">
-    <div class="val">{n_c}</div>
-    <div class="lbl">Externe Kosten / Grauzone (C)</div>
-  </div>
-  <div class="card orange">
-    <div class="val">{n_d}</div>
-    <div class="lbl">Eltern gebeten (D)</div>
-  </div>
-  <div class="card orange">
-    <div class="val">{gesamt.get("E", 0)}</div>
-    <div class="lbl">Notbetreuung (E)</div>
-  </div>
-  <div class="card red">
-    <div class="val">{gesamt.get("F", 0)}</div>
-    <div class="lbl">Vollschließung (F)</div>
+  <div class="meta">
+    Jan 2025 – Mai 2026 ·
+    Waldkita: {arbeitstage_wald} Arbeitstage ·
+    Hauskita: {arbeitstage_haus} Arbeitstage ·
+    Erstellt {date.today().strftime("%d.%m.%Y")}
   </div>
 </div>
 
 <h2>Legende — Zustandsmodell</h2>
-<div class="legende">{legende_html}</div>
-
-<h2>Verlauf Jan 2025 – Mai 2026</h2>
-<div class="chart-container">
-  <div class="chart-wrapper">
-    <canvas id="verlaufChart"></canvas>
+<div class="legende">{legende_html}
+  <div class="legende-item">
+    <div class="legende-farbe" style="background: repeating-linear-gradient(45deg, #27ae60, #27ae60 3px, rgba(255,255,255,0.45) 3px, rgba(255,255,255,0.45) 5px); background-color: #27ae60;">A</div>
+    <div class="legende-text">Schraffierung = nur auto-klassifiziert (nicht gegen Signal verifiziert)</div>
   </div>
 </div>
 
-<h2>Kalender-Übersicht</h2>
-<div class="kalender-container">{kalender_html}</div>
+<div class="kita-section">
+  <div class="kita-label">🌳 Waldkita (Ü3, ~15 Kinder)</div>
 
-<h2>Monatsstatistik</h2>
-{stat_tabelle}
+  <div class="chart-container">
+    <h4>Verlauf nach Monat — Waldkita</h4>
+    <div class="chart-wrapper"><canvas id="chartWald"></canvas></div>
+  </div>
 
-<div class="erklaerung">
-  <h3>Wie wird klassifiziert?</h3>
-  <ul>
-    <li><span class="badge" style="background:{ZUSTAND_FARBEN['A']}">A</span><strong>Normalbetrieb:</strong> Alle geplanten Kernteam-Fachkräfte anwesend. Fachkraftschlüssel weit überfüllt.</li>
-    <li><span class="badge" style="background:{ZUSTAND_FARBEN['B']}">B</span><strong>Intern kompensiert:</strong> 1–2 Krankmeldungen, aber ≥{FK_KOMFORT_MIN} Fachkräfte anwesend. Keine externen Kosten.</li>
-    <li><span class="badge" style="background:{ZUSTAND_FARBEN['C']}">C</span><strong>Kostenintensiv / Grauzone:</strong> Externe Vertretung bezahlt (Anne/Svea/andere), ODER Fachkraft-Zahl auf gesetzlichem Minimum (Überstunden-Risiko).</li>
-    <li><span class="badge" style="background:{ZUSTAND_FARBEN['D']}">D</span><strong>Eltern gebeten:</strong> Eltern aktiv gebeten, Kinder zu Hause zu lassen (Bedarf-1/2-System aktiv). Quelle: Signal-Nachrichten.</li>
-    <li><span class="badge" style="background:{ZUSTAND_FARBEN['E']};color:#fff">E</span><strong>Notbetreuung:</strong> Formale Notbetreuung — Gruppen zusammengelegt, Kapazitätsgrenzen. Quelle: Signal-Nachrichten.</li>
-    <li><span class="badge" style="background:{ZUSTAND_FARBEN['F']};color:#fff">F</span><strong>Vollschließung:</strong> Kita komplett geschlossen. Quelle: Signal-Nachrichten (Catharina, Apr 2026).</li>
-    <li><span class="badge" style="background:{ZUSTAND_FARBEN['G']}">G</span><strong>Geplante Schließung:</strong> Betriebsferien, Klausurtage oder Brückentage laut Jahreskalender 2025/26. Kein Operationsbetrieb — zählt nicht zu den Arbeitstagen.</li>
-  </ul>
-  <p style="margin-top:12px;font-size:12px;color:#7f8c8d">
-    Datenbasis: {len(DIENSTPLAN_MONATE)} Dienstplan-ODS-Dateien (alle Monate Jan 2025–Mai 2026),
-    Vertretungspool-ODS (Stundenauflistungen 2026 täglich; 2025 nur Monatsübersichten),
-    Signal-Chat-Exporte (manuelle Annotationen für D/E/F),
-    Jahreskalender 2025/26 (Nextcloud: Schließzeiten + Klausurtage + Brückentag).
-    Externer Benchmark: Bertelsmann 2024 (Erzieher Ostdeutschland: 34 Kranktage/Jahr).
-  </p>
+  <h3>Kalender — Waldkita</h3>
+  <div class="kalender-container">{kalender_wald}</div>
+
+  <h3>Monatsstatistik — Waldkita</h3>
+  {stat_wald}
+</div>
+
+<div class="kita-section">
+  <div class="kita-label">🏠 Hauskita / Nest (U3, ~10 Kinder)</div>
+
+  <div class="chart-container">
+    <h4>Verlauf nach Monat — Hauskita</h4>
+    <div class="chart-wrapper"><canvas id="chartHaus"></canvas></div>
+  </div>
+
+  <h3>Kalender — Hauskita</h3>
+  <div class="kalender-container">{kalender_haus}</div>
+
+  <h3>Monatsstatistik — Hauskita</h3>
+  {stat_haus}
 </div>
 
 </div><!-- /container -->
 
 <script>
-const data = {chart_data_json};
-const ctx = document.getElementById('verlaufChart').getContext('2d');
-new Chart(ctx, {{
-  type: 'bar',
-  data: data,
-  options: {{
-    responsive: true,
-    maintainAspectRatio: true,
+(function() {{
+  const optBase = {{
+    responsive: true, maintainAspectRatio: false,
     plugins: {{
-      legend: {{ position: 'bottom', labels: {{ boxWidth: 14, font: {{ size: 12 }} }} }},
+      legend: {{ position: 'bottom', labels: {{ boxWidth: 12, font: {{ size: 11 }} }} }},
       tooltip: {{ mode: 'index', intersect: false }},
     }},
     scales: {{
-      x: {{ stacked: true, ticks: {{ font: {{ size: 11 }} }} }},
+      x: {{ stacked: true, ticks: {{ font: {{ size: 10 }} }} }},
       y: {{ stacked: true, title: {{ display: true, text: 'Arbeitstage' }},
-             ticks: {{ font: {{ size: 11 }} }} }},
+             ticks: {{ font: {{ size: 10 }} }} }},
     }},
-  }},
-}});
+  }};
+  new Chart(document.getElementById('chartWald').getContext('2d'),
+    {{ type: 'bar', data: {chart_wald_json}, options: optBase }});
+  new Chart(document.getElementById('chartHaus').getContext('2d'),
+    {{ type: 'bar', data: {chart_haus_json}, options: optBase }});
+}})();
 </script>
 </body>
 </html>"""
@@ -849,67 +891,106 @@ new Chart(ctx, {{
 # ─── Main ─────────────────────────────────────────────────────────────────────
 
 def main():
-    print('Betriebszustands-Analyse Wukaninchen')
-    print('=' * 40)
+    print('Betriebszustands-Analyse Wukaninchen (Waldkita + Hauskita)')
+    print('=' * 60)
 
     # Annotationen laden
     ann_path = os.path.join(SCRIPT_DIR, 'manuelle_annotationen.json')
-    annotationen = {}
+    ann_wald = {}
+    ann_haus = {}
     if os.path.exists(ann_path):
         with open(ann_path, 'r', encoding='utf-8') as f:
-            for entry in json.load(f):
-                d = date.fromisoformat(entry['datum'])
-                annotationen[d] = {
-                    'zustand': entry['zustand'],
-                    'kommentar': entry['kommentar'],
-                    'spaetbetreuung_ausgefallen': entry.get('spaetbetreuung_ausgefallen', False),
-                }
-        print(f'  → {len(annotationen)} manuelle Annotationen geladen')
+            entries = json.load(f)
+        for entry in entries:
+            d    = date.fromisoformat(entry['datum'])
+            kita = entry.get('kita', 'beide')
+            ann  = {
+                'zustand': entry.get('zustand'),
+                'kommentar': entry.get('kommentar', ''),
+                'spaetbetreuung_ausgefallen': entry.get('spaetbetreuung_ausgefallen', False),
+            }
+            if kita in ('wald', 'beide'):
+                ann_wald[d] = ann
+            if kita in ('haus', 'beide'):
+                ann_haus[d] = ann
+        print(f'  → {len(entries)} Annotationen geladen'
+              f' ({len(ann_wald)} Wald, {len(ann_haus)} Haus)')
+    else:
+        print('  → Keine manuelle_annotationen.json gefunden')
 
     # Dienstpläne
     print('  Analysiere Dienstpläne...')
     tage_info = analyse_dienstplaene()
-    print(f'  → {len(tage_info)} Arbeitstage aus Dienstplänen extrahiert')
+    print(f'  → {len(tage_info)} Arbeitstage extrahiert')
 
     # Vertretungspool 2026
     print('  Analysiere Vertretungspool 2026...')
     pool_2026 = analyse_vertretungspool_2026()
-    print(f'  → {sum(len(v) for v in pool_2026.values())} Vertretungs-Einsätze auf Tagesdaten gemappt')
+    print(f'  → {sum(len(v) for v in pool_2026.values())} Einsätze im Pool')
 
     # Klassifikation
-    print('  Klassifiziere alle Tage...')
-    tage = klassifiziere_alle(tage_info, annotationen, pool_2026)
+    print('  Klassifiziere alle Tage (Wald + Haus)...')
+    tage = klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026)
     print(f'  → {len(tage)} Tage klassifiziert')
 
     # Statistiken
-    gesamt, pro_monat = berechne_statistiken(tage)
+    gesamt_wald, pm_wald = berechne_statistiken(tage, 'wald')
+    gesamt_haus, pm_haus = berechne_statistiken(tage, 'haus')
 
     print()
-    print('Zustandsverteilung (Arbeitstage):')
-    arbeitstage = sum(v for k, v in gesamt.items() if k != 'W')
-    for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']:
-        n = gesamt.get(z, 0)
-        pct = f'{100*n/arbeitstage:.1f}%' if arbeitstage > 0 and z not in ('G',) else ''
-        print(f'  {z} ({ZUSTAND_NAMEN[z]:<25}): {n:>3} Tage  {pct}')
-    print(f'  Operative Arbeitstage (A-F+?): {arbeitstage}')
-    print(f'  Geplante Schließtage (G):       {gesamt.get("G", 0)}')
+    arbeitstage_wald = sum(v for k, v in gesamt_wald.items() if k not in ('W', 'P'))
+    arbeitstage_haus = sum(v for k, v in gesamt_haus.items() if k not in ('W', 'P'))
 
-    # JSON Export
+    print(f'Waldkita ({arbeitstage_wald} Arbeitstage):')
+    for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']:
+        n = gesamt_wald.get(z, 0)
+        if n > 0:
+            pct = f'{100*n/arbeitstage_wald:.1f}%' if arbeitstage_wald > 0 else ''
+            print(f'  {z} ({ZUSTAND_NAMEN[z]:<22}): {n:>3}  {pct}')
+
+    print(f'\nHauskita ({arbeitstage_haus} Arbeitstage):')
+    for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']:
+        n = gesamt_haus.get(z, 0)
+        if n > 0:
+            pct = f'{100*n/arbeitstage_haus:.1f}%' if arbeitstage_haus > 0 else ''
+            print(f'  {z} ({ZUSTAND_NAMEN[z]:<22}): {n:>3}  {pct}')
+
+    # Spätbetreuung-Ausfälle zählen (Wald only)
+    spaet_ausfaelle = sum(
+        1 for d, info in tage.items()
+        if info['wald'].get('spaetbetreuung_ausgefallen')
+    )
+    if spaet_ausfaelle > 0:
+        print(f'\nSpätbetreuung ausgefallen (Wald): {spaet_ausfaelle} Tage')
+
+    # JSON Export (neues Schema: wald/haus nested)
     json_out = os.path.join(SCRIPT_DIR, 'betriebszustand_tage.json')
     with open(json_out, 'w', encoding='utf-8') as f:
         json.dump(
-            {d.isoformat(): {
-                'zustand': v['zustand'],
-                'begruendung': v['begruendung'],
-                'spaetbetreuung_ausgefallen': v.get('spaetbetreuung_ausgefallen', False),
-             } for d, v in tage.items()},
-            f, ensure_ascii=False, indent=2
+            {
+                d.isoformat(): {
+                    'wald': {
+                        'zustand': v['wald']['zustand'],
+                        'begruendung': v['wald']['begruendung'],
+                        'verifiziert': v['wald']['verifiziert'],
+                        'spaetbetreuung_ausgefallen': v['wald']['spaetbetreuung_ausgefallen'],
+                    },
+                    'haus': {
+                        'zustand': v['haus']['zustand'],
+                        'begruendung': v['haus']['begruendung'],
+                        'verifiziert': v['haus']['verifiziert'],
+                        'spaetbetreuung_ausgefallen': False,
+                    },
+                }
+                for d, v in sorted(tage.items())
+            },
+            f, ensure_ascii=False, indent=2,
         )
     print(f'\nJSON gespeichert: {json_out}')
 
     # HTML Report
     html_out = os.path.join(SCRIPT_DIR, 'betriebszustand_report.html')
-    html = render_html(tage, gesamt, pro_monat)
+    html = render_html(tage, gesamt_wald, pm_wald, gesamt_haus, pm_haus)
     with open(html_out, 'w', encoding='utf-8') as f:
         f.write(html)
     print(f'HTML Report gespeichert: {html_out}')

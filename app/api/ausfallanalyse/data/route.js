@@ -27,11 +27,9 @@ async function ncGet(path) {
 
 export async function GET() {
   try {
-    // Betriebszustand-Tage (generiert von GitHub Action)
     const tageRes = await ncGet(`${BASE}/betriebszustand_tage.json`);
     const tage = await tageRes.json();
 
-    // Annotationen (live, editierbar via /annotate)
     let annotations = [];
     try {
       const annRes = await ncGet(`${BASE}/manuelle_annotationen.json`);
@@ -40,15 +38,23 @@ export async function GET() {
       if (e.status !== 404) console.warn('Annotationen nicht geladen:', e.message);
     }
 
-    // Annotationen auf tage.json anwenden (für frisch hinzugefügte Einträge)
+    // Annotationen auf wald/haus-Felder anwenden
     for (const ann of annotations) {
       if (!tage[ann.datum]) continue;
-      if (ann.zustand)                       tage[ann.datum].zustand     = ann.zustand;
-      if (ann.kommentar)                     tage[ann.datum].begruendung = ann.kommentar;
-      if (ann.spaetbetreuung_ausgefallen)    tage[ann.datum].spaetbetreuung_ausgefallen = true;
+      // Rückwärts-Kompatibilität: kein kita-Feld → beide
+      const kitas = (!ann.kita || ann.kita === 'beide') ? ['wald', 'haus'] : [ann.kita];
+      for (const k of kitas) {
+        if (!tage[ann.datum][k]) continue;
+        if (ann.zustand)                       tage[ann.datum][k].zustand     = ann.zustand;
+        if (ann.kommentar)                     tage[ann.datum][k].begruendung = ann.kommentar;
+        if (ann.spaetbetreuung_ausgefallen && k === 'wald') {
+          tage[ann.datum][k].spaetbetreuung_ausgefallen = true;
+        }
+        tage[ann.datum][k].verifiziert = true;
+      }
     }
 
-    // Nur Tage bis heute zurückgeben — Dienstplan enthält Planzahlen für die Zukunft
+    // Nur Tage bis heute zurückgeben
     const today = new Date().toISOString().slice(0, 10);
     const gefiltert = {};
     for (const [date, value] of Object.entries(tage)) {

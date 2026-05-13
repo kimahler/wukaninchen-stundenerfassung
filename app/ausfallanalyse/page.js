@@ -4,12 +4,12 @@ import Link from 'next/link';
 
 const FARBEN = {
   A: '#27ae60', B: '#a8d8a8', C: '#f39c12', D: '#e67e22',
-  E: '#e74c3c', F: '#7b241c', G: '#b2bec3', '?': '#95a5a6',
+  E: '#fd79a8', F: '#e74c3c', G: '#7b241c', P: '#b2bec3', '?': '#95a5a6',
 };
 const NAMEN = {
-  A: 'Normalbetrieb', B: 'Intern kompensiert', C: 'Externe Kosten / Grauzone',
-  D: 'Eltern gebeten', E: 'Notbetreuung', F: 'Vollschließung',
-  G: 'Geplante Schließung', '?': 'Daten fehlen',
+  A: 'Normalbetrieb', B: 'Intern kompensiert', C: 'Externe Vertretung',
+  D: 'Gesetzl. Minimum', E: 'Eltern gebeten', F: 'Notbetreuung',
+  G: 'Vollschließung', P: 'Geplant geschlossen', '?': 'Daten fehlen',
 };
 const MONAT_LANG = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
@@ -22,8 +22,7 @@ function fmt(year, month, day) {
 }
 
 function MonatKalender({ year, month, tage }) {
-  const firstWeekday = new Date(year, month - 1, 1).getDay(); // 0=So
-  // For a Mon–Fri-only grid: Sat/Sun → 0 offset (first work day is next Monday)
+  const firstWeekday = new Date(year, month - 1, 1).getDay();
   const moOffset = (firstWeekday === 0 || firstWeekday === 6) ? 0 : firstWeekday - 1;
   const daysInMonth = new Date(year, month, 0).getDate();
 
@@ -38,16 +37,25 @@ function MonatKalender({ year, month, tage }) {
     const info = tage?.[key];
     const z = info?.zustand || '?';
     const bg = FARBEN[z] || '#ccc';
-    const textCol = z === 'F' ? '#fff' : 'rgba(0,0,0,0.65)';
+    const textCol = z === 'G' ? '#fff' : z === 'F' ? '#fff' : 'rgba(0,0,0,0.65)';
     const spaet = info?.spaetbetreuung_ausgefallen;
-    const tip = `${d}.${month}.${year} – ${NAMEN[z] || z}${spaet ? ' · Spätbetreuung ⚠' : ''}${info?.begruendung ? '\n' + info.begruendung : ''}`;
+    const verifiziert = info?.verifiziert ?? true;
+    const tip = `${d}.${month}.${year} – ${NAMEN[z] || z}${spaet ? ' · Spätbetreuung ⚠' : ''}${!verifiziert && z !== '?' && z !== 'P' ? ' · Nicht verifiziert' : ''}${info?.begruendung ? '\n' + info.begruendung : ''}`;
+
+    const cellStyle = (!verifiziert && z !== '?' && z !== 'P' && z !== 'W')
+      ? {
+          backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,0.35) 0px, rgba(255,255,255,0.35) 2px, transparent 2px, transparent 6px)',
+          backgroundColor: bg,
+          minHeight: 36,
+        }
+      : { background: bg, minHeight: 36 };
 
     cells.push(
       <div
         key={d}
         title={tip}
         className="relative rounded flex flex-col items-center justify-center cursor-default select-none"
-        style={{ background: bg, minHeight: 36 }}
+        style={cellStyle}
       >
         <span className="text-[10px] font-semibold leading-none" style={{ color: textCol }}>{d}</span>
         <span className="text-[8px] font-bold leading-none mt-0.5" style={{ color: textCol }}>{z}</span>
@@ -81,26 +89,27 @@ function MonatKalender({ year, month, tage }) {
 }
 
 function SummaryKarten({ tage, year }) {
-  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
+  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, G: 0 };
   for (const [date, info] of Object.entries(tage || {})) {
     if (!date.startsWith(String(year))) continue;
-    const z = info.zustand;
-    if (counts[z] !== undefined) counts[z]++;
+    const z = info?.zustand;
+    if (z && counts[z] !== undefined) counts[z]++;
   }
   const karten = [
     { z: 'A', label: 'Normalbetrieb' },
     { z: 'B', label: 'Intern kompensiert' },
     { z: 'C', label: 'Externe Vertretung' },
-    { z: 'D', label: 'Eltern gebeten' },
-    { z: 'E', label: 'Notbetreuung' },
-    { z: 'F', label: 'Vollschließung' },
+    { z: 'D', label: 'Gesetzl. Minimum' },
+    { z: 'E', label: 'Eltern gebeten' },
+    { z: 'F', label: 'Notbetreuung' },
+    { z: 'G', label: 'Vollschließung' },
   ];
   return (
     <div className="space-y-1">
       <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide px-0.5">
         Arbeitstage {year}
       </div>
-      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+      <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
         {karten.map(({ z, label }) => (
           <div key={z} className="bg-white rounded-xl p-3 shadow-sm border-l-4" style={{ borderLeftColor: FARBEN[z] }}>
             <div className="text-2xl font-bold text-gray-800">{counts[z]}</div>
@@ -119,7 +128,6 @@ function VerlaufChart({ tage }) {
   useEffect(() => {
     if (!tage || !canvasRef.current) return;
 
-    // Collect sorted month keys
     const monthSet = new Set();
     for (const d of Object.keys(tage)) monthSet.add(d.slice(0, 7));
     const months = [...monthSet].sort();
@@ -129,12 +137,12 @@ function VerlaufChart({ tage }) {
       return `${MONAT_KURZ[parseInt(mo) - 1]} ${y.slice(2)}`;
     });
 
-    const zustande = ['A', 'B', 'C', 'D', 'E', 'F'];
+    const zustande = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
     const datasets = zustande.map(z => {
       const data = months.map(m => {
         let count = 0;
         for (const [d, info] of Object.entries(tage)) {
-          if (d.startsWith(m) && info.zustand === z) count++;
+          if (d.startsWith(m) && info?.zustand === z) count++;
         }
         return count;
       });
@@ -190,6 +198,7 @@ export default function AusfallanalysePage() {
   const [tage, setTage] = useState(null);
   const [error, setError] = useState(null);
   const [year, setYear] = useState(new Date().getFullYear());
+  const [kita, setKita] = useState('wald');
 
   useEffect(() => {
     fetch('/api/ausfallanalyse/data')
@@ -197,6 +206,13 @@ export default function AusfallanalysePage() {
       .then(d => d.error ? setError(d.error) : setTage(d.tage))
       .catch(e => setError(e.message));
   }, []);
+
+  // Flatten per-kita view for all child components
+  const tageFlat = tage
+    ? Object.fromEntries(
+        Object.entries(tage).map(([d, v]) => [d, v[kita] ?? v])
+      )
+    : null;
 
   const jahre = tage
     ? [...new Set(Object.keys(tage).map(d => d.slice(0, 4)).filter(Boolean))].sort()
@@ -221,7 +237,26 @@ export default function AusfallanalysePage() {
           <div className="font-semibold text-sm">Betriebszustand</div>
           <div className="text-xs text-gray-400">Kita Wukaninchen</div>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2">
+          {/* Kita-Toggle */}
+          <div className="flex rounded-lg overflow-hidden border border-white/20">
+            <button
+              onClick={() => setKita('wald')}
+              className={`text-xs px-3 py-1.5 transition-colors ${
+                kita === 'wald' ? 'bg-white text-gray-800 font-semibold' : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              Wald
+            </button>
+            <button
+              onClick={() => setKita('haus')}
+              className={`text-xs px-3 py-1.5 transition-colors ${
+                kita === 'haus' ? 'bg-white text-gray-800 font-semibold' : 'text-gray-300 hover:text-white'
+              }`}
+            >
+              Haus
+            </button>
+          </div>
           <Link
             href="/ausfallanalyse/annotate"
             className="text-xs bg-white/10 hover:bg-white/20 px-3 py-1.5 rounded-lg transition-colors"
@@ -248,11 +283,11 @@ export default function AusfallanalysePage() {
           </div>
         )}
 
-        {tage && (
+        {tageFlat && (
           <>
-            <SummaryKarten tage={tage} year={year} />
+            <SummaryKarten tage={tageFlat} year={year} />
 
-            <VerlaufChart tage={tage} />
+            <VerlaufChart tage={tageFlat} />
 
             {jahre.length > 1 && (
               <div className="flex gap-2">
@@ -274,30 +309,44 @@ export default function AusfallanalysePage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {monate.map(m => (
-                <MonatKalender key={m} year={year} month={m} tage={tage} />
+                <MonatKalender key={`${kita}-${m}`} year={year} month={m} tage={tageFlat} />
               ))}
             </div>
 
             <div className="bg-white rounded-xl p-4 shadow-sm">
               <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Legende</div>
               <div className="flex flex-wrap gap-x-4 gap-y-2">
-                {['A', 'B', 'C', 'D', 'E', 'F', 'G'].map(z => (
+                {['A', 'B', 'C', 'D', 'E', 'F', 'G', 'P'].map(z => (
                   <div key={z} className="flex items-center gap-1.5 text-xs text-gray-600">
                     <div
                       className="w-5 h-5 rounded flex items-center justify-center text-[9px] font-bold shrink-0"
-                      style={{ background: FARBEN[z], color: z === 'F' ? '#fff' : 'rgba(0,0,0,0.6)' }}
+                      style={{ background: FARBEN[z], color: z === 'G' ? '#fff' : z === 'F' ? '#fff' : 'rgba(0,0,0,0.6)' }}
                     >
                       {z}
                     </div>
                     {NAMEN[z]}
                   </div>
                 ))}
+                {/* Schraffierung */}
                 <div className="flex items-center gap-1.5 text-xs text-gray-600">
-                  <div className="w-5 h-5 rounded bg-gray-100 flex items-end justify-end p-0.5 shrink-0">
-                    <span style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderBottom: '10px solid #e67e22' }} />
-                  </div>
-                  Spätbetreuung ausgefallen
+                  <div
+                    className="w-5 h-5 rounded shrink-0"
+                    style={{
+                      backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,0.45) 0px, rgba(255,255,255,0.45) 2px, transparent 2px, transparent 6px)',
+                      backgroundColor: FARBEN['B'],
+                    }}
+                  />
+                  Nicht gegen Signal verifiziert
                 </div>
+                {/* Spätbetreuung — nur Wald */}
+                {kita === 'wald' && (
+                  <div className="flex items-center gap-1.5 text-xs text-gray-600">
+                    <div className="w-5 h-5 rounded bg-gray-100 flex items-end justify-end p-0.5 shrink-0">
+                      <span style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderBottom: '10px solid #e74c3c' }} />
+                    </div>
+                    Spätbetreuung ausgefallen
+                  </div>
+                )}
               </div>
             </div>
           </>

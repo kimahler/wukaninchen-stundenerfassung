@@ -47,30 +47,39 @@ export async function GET() {
 export async function POST(request) {
   try {
     const body = await request.json();
-    const { datum, zustand, spaetbetreuung_ausgefallen, kommentar } = body;
+    const { datum, kita, zustand, spaetbetreuung_ausgefallen, kommentar, quelle } = body;
 
     if (!datum || !/^\d{4}-\d{2}-\d{2}$/.test(datum)) {
       return NextResponse.json({ error: 'Ungültiges Datum' }, { status: 400 });
     }
 
+    const normKita = kita || 'beide';
     const list = await readAnnotations();
-    const idx  = list.findIndex(a => a.datum === datum);
+
+    // Upsert by datum + kita (composite key)
+    const idx = list.findIndex(
+      a => a.datum === datum && (a.kita || 'beide') === normKita
+    );
     const entry = {
       datum,
-      zustand:                  zustand || null,
+      kita:                       normKita,
+      zustand:                    zustand || null,
       spaetbetreuung_ausgefallen: spaetbetreuung_ausgefallen || false,
-      kommentar:                kommentar || '',
+      kommentar:                  kommentar || '',
+      quelle:                     quelle || '',
     };
 
     if (idx >= 0) {
       list[idx] = entry;
     } else {
       list.push(entry);
-      list.sort((a, b) => a.datum.localeCompare(b.datum));
+      list.sort((a, b) => a.datum.localeCompare(b.datum) || (a.kita || '').localeCompare(b.kita || ''));
     }
 
-    // Leere Einträge entfernen
-    const clean = list.filter(a => a.zustand || a.spaetbetreuung_ausgefallen || a.kommentar);
+    // Remove empty entries
+    const clean = list.filter(
+      a => a.zustand || a.spaetbetreuung_ausgefallen || a.kommentar
+    );
     await writeAnnotations(clean);
     return NextResponse.json({ ok: true });
   } catch (err) {
