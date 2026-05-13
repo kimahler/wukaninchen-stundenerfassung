@@ -48,7 +48,14 @@ export async function GET() {
       if (ann.spaetbetreuung_ausgefallen)    tage[ann.datum].spaetbetreuung_ausgefallen = true;
     }
 
-    const res = NextResponse.json({ tage });
+    // Nur Tage bis heute zurückgeben — Dienstplan enthält Planzahlen für die Zukunft
+    const today = new Date().toISOString().slice(0, 10);
+    const gefiltert = {};
+    for (const [date, value] of Object.entries(tage)) {
+      if (date <= today) gefiltert[date] = value;
+    }
+
+    const res = NextResponse.json({ tage: gefiltert });
     res.headers.set('Cache-Control', 'no-store');
     return res;
   } catch (err) {

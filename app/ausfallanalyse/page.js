@@ -96,13 +96,18 @@ function SummaryKarten({ tage, year }) {
     { z: 'F', label: 'Vollschließung' },
   ];
   return (
-    <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
-      {karten.map(({ z, label }) => (
-        <div key={z} className="bg-white rounded-xl p-3 shadow-sm border-l-4" style={{ borderLeftColor: FARBEN[z] }}>
-          <div className="text-2xl font-bold text-gray-800">{counts[z]}</div>
-          <div className="text-xs text-gray-400 mt-0.5">{label}</div>
-        </div>
-      ))}
+    <div className="space-y-1">
+      <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide px-0.5">
+        Arbeitstage {year}
+      </div>
+      <div className="grid grid-cols-3 gap-2 sm:grid-cols-6">
+        {karten.map(({ z, label }) => (
+          <div key={z} className="bg-white rounded-xl p-3 shadow-sm border-l-4" style={{ borderLeftColor: FARBEN[z] }}>
+            <div className="text-2xl font-bold text-gray-800">{counts[z]}</div>
+            <div className="text-xs text-gray-400 mt-0.5">{label}</div>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }
