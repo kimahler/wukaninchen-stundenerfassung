@@ -52,13 +52,13 @@ VERTRETUNGSPOOL_EXTERN = {
     'Liu', 'Liu Ness', 'Mariella', 'Bianca', 'Nina', 'Romane',
 }
 
-# Schwellenwerte (KitaG Brandenburg §10)
-# Wald (Ü3, ~15 Kinder): 1 FK/12 Kinder → Minimum 2; Komfort ≥ 3
+# Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
+# Wald (Ü3, ~15 Kinder): 15 Kinder ÷ 10 Kinder/Stelle = 1,5 Stellen → Min. 2 FK; Komfort ≥ 3
 FK_KOMFORT_MIN_WALD = 3
 FK_GESETZ_MIN_WALD  = 2
-# Haus (U3, ~10 Kinder): 1 FK/4-5 Kinder → Minimum 2-3; Komfort ≥ 3
-FK_KOMFORT_MIN_HAUS = 3
-FK_GESETZ_MIN_HAUS  = 2
+# Haus (U3, ~10 Kinder): 10 Kinder ÷ 4,25 Kinder/Stelle = 2,35 Stellen → Min. 3 FK; Komfort ≥ 4
+FK_KOMFORT_MIN_HAUS = 4
+FK_GESETZ_MIN_HAUS  = 3
 
 # Mi (2) und Fr (4) haben strukturell keine Spätbetreuung → nie flaggen
 KEIN_SPAET_WOCHENTAGE = {2, 4}
@@ -534,12 +534,14 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
                 'begruendung': b_wald,
                 'verifiziert': v_wald,
                 'spaetbetreuung_ausgefallen': s_wald,
+                'n_fk': len(fk_wald),
             },
             'haus': {
                 'zustand': z_haus,
                 'begruendung': b_haus,
                 'verifiziert': v_haus,
                 'spaetbetreuung_ausgefallen': False,  # Hauskita hat keine Spätbetreuung
+                'n_fk': len(fk_haus),
             },
         }
         aktuell += timedelta(days=1)
@@ -974,12 +976,14 @@ def main():
                         'begruendung': v['wald']['begruendung'],
                         'verifiziert': v['wald']['verifiziert'],
                         'spaetbetreuung_ausgefallen': v['wald']['spaetbetreuung_ausgefallen'],
+                        'n_fk': v['wald'].get('n_fk'),
                     },
                     'haus': {
                         'zustand': v['haus']['zustand'],
                         'begruendung': v['haus']['begruendung'],
                         'verifiziert': v['haus']['verifiziert'],
                         'spaetbetreuung_ausgefallen': False,
+                        'n_fk': v['haus'].get('n_fk'),
                     },
                 }
                 for d, v in sorted(tage.items())

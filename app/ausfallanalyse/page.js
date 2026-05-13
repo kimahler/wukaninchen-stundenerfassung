@@ -16,13 +16,18 @@ const MONAT_LANG = [
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
 const MONAT_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-const SIGNAL_START = '2025-04-01'; // Schraffierung nur vor diesem Datum (kein Signal-Coverage davor)
+const SIGNAL_START = '2025-04-01';
+// FK-Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
+// Wald Ü3: 15 Kinder ÷ 10 Kinder/Stelle = 1,5 Stellen → Minimum 2 FK
+// Haus U3: 10 Kinder ÷ 4,25 Kinder/Stelle = 2,35 Stellen → Minimum 3 FK
+const FK_GESETZ_MIN = { wald: 2, haus: 3 };
+const FK_KOMFORT_MIN = { wald: 3, haus: 4 };
 
 function fmt(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-function MonatKalender({ year, month, tage }) {
+function MonatKalender({ year, month, tage, fkMin }) {
   const firstWeekday = new Date(year, month - 1, 1).getDay();
   const moOffset = (firstWeekday === 0 || firstWeekday === 6) ? 0 : firstWeekday - 1;
   const daysInMonth = new Date(year, month, 0).getDate();
@@ -41,16 +46,20 @@ function MonatKalender({ year, month, tage }) {
     const textCol = z === 'G' ? '#fff' : z === 'F' ? '#fff' : 'rgba(0,0,0,0.65)';
     const spaet = info?.spaetbetreuung_ausgefallen;
     const verifiziert = info?.verifiziert ?? true;
-    const tip = `${d}.${month}.${year} – ${NAMEN[z] || z}${spaet ? ' · Spätbetreuung ⚠' : ''}${key < SIGNAL_START && !verifiziert && z !== '?' && z !== 'P' && z !== 'W' ? ' · Nicht verifiziert' : ''}${info?.begruendung ? '\n' + info.begruendung : ''}`;
+    const nFk = info?.n_fk;
+    const showFkCount = nFk != null && z !== 'W' && z !== 'P' && z !== '?';
+
+    const fkLine = showFkCount ? ` · ${nFk}/${fkMin} FK im Einsatz/Minimum` : '';
+    const tip = `${d}.${month}.${year} – ${NAMEN[z] || z}${fkLine}${spaet ? ' · Spätbetreuung ⚠' : ''}${key < SIGNAL_START && !verifiziert && z !== '?' && z !== 'P' && z !== 'W' ? ' (auto-klassifiziert)' : ''}${info?.begruendung ? '\n' + info.begruendung : ''}`;
 
     const showHatch = !verifiziert && key < SIGNAL_START && z !== '?' && z !== 'P' && z !== 'W';
     const cellStyle = showHatch
       ? {
           backgroundImage: 'repeating-linear-gradient(45deg, rgba(255,255,255,0.35) 0px, rgba(255,255,255,0.35) 2px, transparent 2px, transparent 6px)',
           backgroundColor: bg,
-          minHeight: 36,
+          minHeight: 40,
         }
-      : { background: bg, minHeight: 36 };
+      : { background: bg, minHeight: 40 };
 
     cells.push(
       <div
@@ -61,6 +70,9 @@ function MonatKalender({ year, month, tage }) {
       >
         <span className="text-[10px] font-semibold leading-none" style={{ color: textCol }}>{d}</span>
         <span className="text-[8px] font-bold leading-none mt-0.5" style={{ color: textCol }}>{z}</span>
+        {showFkCount && (
+          <span className="text-[7px] leading-none mt-0.5 opacity-80" style={{ color: textCol }}>{nFk}/{fkMin}</span>
+        )}
         {spaet && (
           <span
             className="absolute bottom-0.5 right-0.5"
@@ -311,24 +323,49 @@ export default function AusfallanalysePage() {
 
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               {monate.map(m => (
-                <MonatKalender key={`${kita}-${m}`} year={year} month={m} tage={tageFlat} />
+                <MonatKalender key={`${kita}-${m}`} year={year} month={m} tage={tageFlat} fkMin={FK_GESETZ_MIN[kita]} />
               ))}
             </div>
 
             <div className="bg-white rounded-xl p-4 shadow-sm">
               <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide mb-3">Legende — Betriebszustände</div>
+
+              {/* Schwellenwerte-Box — kita-spezifisch */}
+              <div className="bg-gray-50 rounded-lg p-3 mb-4 text-xs text-gray-600 space-y-1">
+                <div className="font-semibold text-gray-700 mb-1">
+                  Schwellenwerte — {kita === 'wald' ? 'Waldkita (Ü3, ~15 Kinder)' : 'Hauskita / Nest (U3, ~10 Kinder)'}
+                </div>
+                <div>
+                  <span className="font-medium">Komfortgrenze:</span>
+                  {' '}≥{FK_KOMFORT_MIN[kita]} FK im Einsatz → Zustand A (kein Krank) oder B (mit Krank)
+                </div>
+                <div>
+                  <span className="font-medium">Gesetzl. Minimum:</span>
+                  {' '}{FK_GESETZ_MIN[kita]} FK → Zustand D · Unter Minimum → F · Null FK → G
+                </div>
+                <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-200 mt-1">
+                  Quelle: §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12) ·{' '}
+                  {kita === 'wald'
+                    ? '15 Kinder ÷ 10 Kinder/Stelle = 1,5 Stellen → Min. 2 FK'
+                    : '10 Kinder ÷ 4,25 Kinder/Stelle = 2,35 Stellen → Min. 3 FK'}
+                </div>
+                <div className="text-[10px] text-gray-400">
+                  Zahl im Kalenderfeld = FK im Einsatz / gesetzl. Minimum (z.B. «3/2» = 3 FK anwesend, Minimum 2)
+                </div>
+              </div>
+
               <div className="space-y-2">
                 {[
-                  { z: 'A', desc: 'Alle geplanten Fachkräfte anwesend, kein Kranktag. Regulärer Betrieb ohne Einschränkungen.' },
-                  { z: 'B', desc: 'Mindestens eine FK ist krank, aber die Komfortgrenze (≥3 FK) ist durch anwesende Kolleg:innen gedeckt. Kein externer Einsatz nötig.' },
-                  { z: 'C', desc: 'Eine externe Vertretungskraft aus dem Vertretungspool ist im Einsatz. Reguläre Betreuung möglich, aber mit externer Unterstützung.' },
-                  { z: 'D', desc: 'FK-Zahl liegt genau auf dem gesetzlichen Minimum nach KitaG Brandenburg §10 (2 FK). Kein Puffer — jeder weitere Ausfall wäre kritisch.' },
-                  { z: 'E', desc: 'Eltern wurden aktiv gebeten, ihre Kinder wenn möglich zu Hause zu lassen. Manuell erfasst aus Signal-Nachrichten.' },
-                  { z: 'F', desc: 'Formale Notbetreuung: stark reduzierte Kapazität. Nur Kinder, für die keine andere Betreuung möglich ist. Aus Dienstplan-Header oder Signal.' },
-                  { z: 'G', desc: 'Kita vollständig geschlossen, auch für Notfälle. Manuell erfasst aus Signal-Nachrichten.' },
-                  { z: 'P', desc: 'Geplante Schließung: Betriebsferien, Klausurtage oder Brückentage. Aus dem Jahreskalender. Nicht in der Statistik gezählt.' },
-                  { z: 'W', desc: 'Samstag, Sonntag oder gesetzlicher Feiertag. Kein Betriebstag.' },
-                  { z: '?', desc: 'Kein Dienstplan-Eintrag für diesen Tag vorhanden — Zustand unbekannt. Passiert wenn die ODS-Datei fehlt oder noch nicht hochgeladen wurde.' },
+                  { z: 'A', desc: `≥${FK_KOMFORT_MIN[kita]} FK im Einsatz, kein Kranktag. Komfortgrenze erfüllt, Betrieb ohne Einschränkungen.` },
+                  { z: 'B', desc: `≥${FK_KOMFORT_MIN[kita]} FK im Einsatz trotz Kranktag. Komfortgrenze durch anwesende Kolleg:innen gedeckt, kein externer Einsatz nötig.` },
+                  { z: 'C', desc: 'Externe Vertretungskraft aus dem Vertretungspool im Einsatz. Betreuung möglich, aber mit externer Unterstützung.' },
+                  { z: 'D', desc: `Genau ${FK_GESETZ_MIN[kita]} FK im Einsatz — gesetzl. Minimum nach §10 Abs. 1 KitaG Bbg. Kein Puffer, jeder weitere Ausfall wäre kritisch.` },
+                  { z: 'E', desc: 'Eltern aktiv gebeten, Kinder wenn möglich zu Hause zu lassen. Manuell erfasst.' },
+                  { z: 'F', desc: `Unter gesetzl. Minimum (${FK_GESETZ_MIN[kita] - 1} oder weniger FK im Einsatz). Formale Notbetreuung mit stark reduzierter Kapazität.` },
+                  { z: 'G', desc: 'Kita vollständig geschlossen, auch für Notfälle. Manuell erfasst.' },
+                  { z: 'P', desc: 'Geplante Schließung: Betriebsferien, Klausurtage, Brückentage. Nicht in der Statistik.' },
+                  { z: 'W', desc: 'Gesetzlicher Feiertag. Da der Kalender nur Mo–Fr zeigt, entspricht W immer einem Feiertag auf einem Werktag.' },
+                  { z: '?', desc: 'Kein Dienstplan-Eintrag für diesen Tag. ODS-Datei fehlt oder noch nicht hochgeladen.' },
                 ].map(({ z, desc }) => (
                   <div key={z} className="flex items-start gap-2">
                     <div
@@ -354,7 +391,7 @@ export default function AusfallanalysePage() {
                   />
                   <div>
                     <span className="text-xs font-semibold text-gray-700">Schraffierung</span>
-                    <span className="text-xs text-gray-500"> — Nur auto-klassifiziert aus Dienstplan (Jan–Mär 2025), noch nicht gegen Signal-Nachrichten verifiziert. Ab April 2025 liegen Signal-Daten vor — keine Schraffierung.</span>
+                    <span className="text-xs text-gray-500"> — Nur auto-klassifiziert aus Dienstplan (Jan–Mär 2025).</span>
                   </div>
                 </div>
                 {/* Spätbetreuung — nur Wald */}
@@ -365,7 +402,7 @@ export default function AusfallanalysePage() {
                     </div>
                     <div>
                       <span className="text-xs font-semibold text-gray-700">Spätbetreuung ausgefallen</span>
-                      <span className="text-xs text-gray-500"> — Geplante Spätbetreuung in der Waldkita (16:00–18:00 Uhr) ist an diesem Tag ausgefallen. Nur bei Waldkita relevant, Hauskita hat keine Spätbetreuung.</span>
+                      <span className="text-xs text-gray-500"> — Geplante Spätbetreuung Waldkita (16:00–18:00 Uhr) ausgefallen. Nur Waldkita relevant.</span>
                     </div>
                   </div>
                 )}
