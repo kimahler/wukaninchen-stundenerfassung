@@ -56,8 +56,8 @@ function MonatKalender({ year, month, tage }) {
             className="absolute bottom-0.5 right-0.5"
             style={{
               width: 0, height: 0,
-              borderLeft: '5px solid transparent',
-              borderBottom: '5px solid #e67e22',
+              borderLeft: '10px solid transparent',
+              borderBottom: '10px solid #e67e22',
             }}
           />
         )}
@@ -294,7 +294,7 @@ export default function AusfallanalysePage() {
                 ))}
                 <div className="flex items-center gap-1.5 text-xs text-gray-600">
                   <div className="w-5 h-5 rounded bg-gray-100 flex items-end justify-end p-0.5 shrink-0">
-                    <span style={{ width: 0, height: 0, borderLeft: '5px solid transparent', borderBottom: '5px solid #e67e22' }} />
+                    <span style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderBottom: '10px solid #e67e22' }} />
                   </div>
                   Spätbetreuung ausgefallen
                 </div>
