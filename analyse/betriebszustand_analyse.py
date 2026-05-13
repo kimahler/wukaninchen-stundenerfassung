@@ -333,22 +333,9 @@ def analyse_dienstplaene():
                     'spaet_workers_wald': spaet_wald,
                 }
 
-    # ── Wochenbasierte Spätbetreuungs-Auswertung (nur Waldkita) ─────────────
-    woche_hat_spaet = defaultdict(bool)
+    # Spätbetreuung wird nur per Signal-Annotation gesetzt (Hauskita)
     for d, info in tage_info.items():
-        montag_d = d - timedelta(days=d.weekday())
-        if info.get('spaet_workers_wald'):
-            woche_hat_spaet[montag_d] = True
-
-    for d, info in tage_info.items():
-        montag_d = d - timedelta(days=d.weekday())
-        hat_coverage = bool(info.get('spaet_workers_wald'))
-        woche_aktiv  = woche_hat_spaet.get(montag_d, False)
-        info['spaetbetreuung_ausgefallen'] = (
-            woche_aktiv and not hat_coverage
-            and d.weekday() not in KEIN_SPAET_WOCHENTAGE
-            and d not in SCHLIESSZEITEN
-        )
+        info['spaetbetreuung_ausgefallen'] = False
 
     return tage_info
 
@@ -499,21 +486,28 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
             z_wald = ann_w['zustand']
             b_wald = ann_w.get('kommentar', f'Manuelle Annotation: {z_wald}')
             v_wald = True
-            s_wald = ann_w.get('spaetbetreuung_ausgefallen', spaet_ausgefallen)
         else:
             z_wald, b_wald = klassifiziere_kita(
                 fk_wald, kr_wald, vt_wald,
                 FK_KOMFORT_MIN_WALD, FK_GESETZ_MIN_WALD, notbetreuung_hdr,
             )
             v_wald = False
-            s_wald = spaet_ausgefallen
 
-        # Hauskita klassifizieren
-        if aktuell in ann_haus and ann_haus[aktuell].get('zustand'):
+        # Hauskita klassifizieren (Spätbetreuung nur hier, via Annotation)
+        s_haus = False
+        if aktuell in ann_haus:
             ann_h = ann_haus[aktuell]
-            z_haus = ann_h['zustand']
-            b_haus = ann_h.get('kommentar', f'Manuelle Annotation: {z_haus}')
-            v_haus = True
+            s_haus = ann_h.get('spaetbetreuung_ausgefallen', False)
+            if ann_h.get('zustand'):
+                z_haus = ann_h['zustand']
+                b_haus = ann_h.get('kommentar', f'Manuelle Annotation: {z_haus}')
+                v_haus = True
+            else:
+                z_haus, b_haus = klassifiziere_kita(
+                    fk_haus, kr_haus, vt_haus,
+                    FK_KOMFORT_MIN_HAUS, FK_GESETZ_MIN_HAUS, notbetreuung_hdr,
+                )
+                v_haus = False
         else:
             z_haus, b_haus = klassifiziere_kita(
                 fk_haus, kr_haus, vt_haus,
@@ -526,14 +520,14 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
                 'zustand': z_wald,
                 'begruendung': b_wald,
                 'verifiziert': v_wald,
-                'spaetbetreuung_ausgefallen': s_wald,
+                'spaetbetreuung_ausgefallen': False,  # Spätbetreuung nur in Hauskita
                 'n_fk': len(fk_wald),
             },
             'haus': {
                 'zustand': z_haus,
                 'begruendung': b_haus,
                 'verifiziert': v_haus,
-                'spaetbetreuung_ausgefallen': False,  # Hauskita hat keine Spätbetreuung
+                'spaetbetreuung_ausgefallen': s_haus,
                 'n_fk': len(fk_haus),
             },
         }
@@ -950,13 +944,13 @@ def main():
             pct = f'{100*n/arbeitstage_haus:.1f}%' if arbeitstage_haus > 0 else ''
             print(f'  {z} ({ZUSTAND_NAMEN[z]:<22}): {n:>3}  {pct}')
 
-    # Spätbetreuung-Ausfälle zählen (Wald only)
+    # Spätbetreuung-Ausfälle zählen (Hauskita, nur per Annotation)
     spaet_ausfaelle = sum(
         1 for d, info in tage.items()
-        if info['wald'].get('spaetbetreuung_ausgefallen')
+        if info['haus'].get('spaetbetreuung_ausgefallen')
     )
     if spaet_ausfaelle > 0:
-        print(f'\nSpätbetreuung ausgefallen (Wald): {spaet_ausfaelle} Tage')
+        print(f'\nSpätbetreuung ausgefallen (Haus): {spaet_ausfaelle} Tage')
 
     # JSON Export (neues Schema: wald/haus nested)
     json_out = os.path.join(SCRIPT_DIR, 'betriebszustand_tage.json')
@@ -968,14 +962,14 @@ def main():
                         'zustand': v['wald']['zustand'],
                         'begruendung': v['wald']['begruendung'],
                         'verifiziert': v['wald']['verifiziert'],
-                        'spaetbetreuung_ausgefallen': v['wald']['spaetbetreuung_ausgefallen'],
+                        'spaetbetreuung_ausgefallen': False,  # Spätbetreuung nur in Hauskita
                         'n_fk': v['wald'].get('n_fk'),
                     },
                     'haus': {
                         'zustand': v['haus']['zustand'],
                         'begruendung': v['haus']['begruendung'],
                         'verifiziert': v['haus']['verifiziert'],
-                        'spaetbetreuung_ausgefallen': False,
+                        'spaetbetreuung_ausgefallen': v['haus']['spaetbetreuung_ausgefallen'],
                         'n_fk': v['haus'].get('n_fk'),
                     },
                 }

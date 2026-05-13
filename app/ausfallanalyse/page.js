@@ -98,7 +98,7 @@ function TagModal({ day, kita, fkMin, fkKomfortMin, onClose }) {
 
         {info?.spaetbetreuung_ausgefallen && (
           <div className="text-xs text-orange-600 bg-orange-50 rounded-lg p-2 mt-3">
-            Spätbetreuung ausgefallen (Waldkita 16:00–18:00 Uhr)
+            Spätbetreuung ausgefallen (Hauskita 16:00–18:00 Uhr)
           </div>
         )}
       </div>
@@ -443,17 +443,17 @@ export default function AusfallanalysePage() {
                   {
                     z: 'E',
                     desc: 'Eltern aktiv gebeten, Kinder wenn möglich zu Hause zu lassen.',
-                    quelle: 'Nur Signal',
+                    quelle: 'Signal',
                   },
                   {
                     z: 'F',
-                    desc: 'Formale Notbetreuung — nur wenn in Signal-Nachricht explizit so kommuniziert.',
-                    quelle: 'Nur Signal',
+                    desc: 'Formale Notbetreuung: beide Gruppen zusammengelegt in der Hauskita.',
+                    quelle: 'Signal',
                   },
                   {
                     z: 'G',
-                    desc: 'Kita vollständig geschlossen — nur wenn in Signal-Nachricht so kommuniziert.',
-                    quelle: 'Nur Signal',
+                    desc: 'Kita vollständig geschlossen, kein Betreuungsangebot.',
+                    quelle: 'Signal',
                   },
                   {
                     z: 'P',
@@ -487,7 +487,7 @@ export default function AusfallanalysePage() {
                         {quelle && (
                           <span
                             className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${
-                              quelle === 'Nur Signal'
+                              quelle === 'Signal'
                                 ? 'bg-red-50 text-red-500'
                                 : quelle === 'Auto'
                                 ? 'bg-blue-50 text-blue-400'
@@ -503,15 +503,18 @@ export default function AusfallanalysePage() {
                   </div>
                 ))}
 
-                {kita === 'wald' && (
+                {kita === 'haus' && (
                   <div className="flex items-start gap-2 pt-2 border-t border-gray-100">
                     <div className="w-6 h-6 rounded bg-gray-100 flex items-end justify-end p-0.5 shrink-0 mt-0.5">
                       <span style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderBottom: '10px solid #e74c3c' }} />
                     </div>
                     <div>
-                      <span className="text-xs font-semibold text-gray-700">Spätbetreuung ausgefallen</span>
+                      <div className="flex items-baseline gap-1.5 flex-wrap">
+                        <span className="text-xs font-semibold text-gray-700">Spätbetreuung ausgefallen</span>
+                        <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-50 text-red-500">Signal</span>
+                      </div>
                       <div className="text-xs text-gray-500">
-                        Geplante Spätbetreuung Waldkita (16:00–18:00 Uhr) ausgefallen. Nur Waldkita relevant.
+                        Geplante Spätbetreuung Hauskita (16:00–18:00 Uhr) ausgefallen. Nur Hauskita relevant.
                       </div>
                     </div>
                   </div>
