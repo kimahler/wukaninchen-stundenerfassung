@@ -203,7 +203,7 @@ function SummaryKarten({ tage }) {
   return (
     <div className="space-y-1">
       <div className="text-[11px] font-semibold text-gray-400 uppercase tracking-wide px-0.5">
-        Arbeitstage 2026 (Jan–Mai)
+        Arbeitstage 2026
       </div>
       <div className="grid grid-cols-4 gap-2 sm:grid-cols-7">
         {karten.map(({ z, label }) => (
@@ -322,7 +322,7 @@ export default function AusfallanalysePage() {
     : null;
 
   const monate2026 = tage
-    ? Array.from({ length: 5 }, (_, i) => i + 1).filter(m => {
+    ? Array.from({ length: 12 }, (_, i) => i + 1).filter(m => {
         const prefix = `2026-${String(m).padStart(2, '0')}`;
         return Object.keys(tage).some(d => d.startsWith(prefix));
       })

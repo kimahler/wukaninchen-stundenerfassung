@@ -2,7 +2,7 @@
 """
 Betriebszustands-Analyse Wukaninchen Kita
 ==========================================
-Klassifiziert jeden Arbeitstag von Jan 2025 – Mai 2026 getrennt für
+Klassifiziert jeden Arbeitstag von Jan – Dez 2026 getrennt für
 Waldkita (Ü3) und Hauskita/Nest (U3) in einen von 6 Zuständen (A–F) + P/W.
 
 Personalkategorien:
@@ -60,10 +60,9 @@ ODS_DIR = '/tmp'
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 DIENSTPLAN_MONATE = [
-    '2025_01', '2025_02', '2025_03', '2025_04', '2025_05',
-    '2025_06', '2025_07', '2025_08', '2025_09', '2025_10',
-    '2025_11', '2025_12',
     '2026_01', '2026_02', '2026_03', '2026_04', '2026_05',
+    '2026_06', '2026_07', '2026_08', '2026_09', '2026_10',
+    '2026_11', '2026_12',
 ]
 
 # ─── Personalklassifikation ──────────────────────────────────────────────────
@@ -148,46 +147,23 @@ ZUSTAND_NAMEN = {
 # Schweregrade für Diagnose-Ausgabe (höherer Wert = kritischer)
 SCHWERE = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'P': 0, 'W': 0, '?': 0}
 
-# Brandenburg Feiertage 2025/2026
+# Brandenburg Feiertage 2026
 FEIERTAGE = {
-    date(2025, 1, 1), date(2025, 4, 18), date(2025, 4, 21),
-    date(2025, 5, 1), date(2025, 5, 29), date(2025, 6, 9),
-    date(2025, 10, 3), date(2025, 10, 31),
-    date(2025, 12, 25), date(2025, 12, 26),
-    date(2026, 1, 1), date(2026, 4, 3), date(2026, 4, 6),
-    date(2026, 5, 1), date(2026, 5, 14), date(2026, 5, 25),
+    date(2026, 1, 1),   # Neujahr
+    date(2026, 4, 3),   # Karfreitag
+    date(2026, 4, 6),   # Ostermontag
+    date(2026, 5, 1),   # Tag der Arbeit
+    date(2026, 5, 14),  # Christi Himmelfahrt
+    date(2026, 5, 25),  # Pfingstmontag
+    date(2026, 10, 3),  # Tag der Deutschen Einheit
+    date(2026, 10, 31), # Reformationstag
+    date(2026, 12, 25), # 1. Weihnachtstag
+    date(2026, 12, 26), # 2. Weihnachtstag
 }
 
-# Geplante Schließzeiten (P) — aus Jahreskalender 2025/26 (Nextcloud)
+# Geplante Schließzeiten (P) — 2026 aus Jahreskalender + WuKaNews
 SCHLIESSZEITEN = {
-    date(2025, 1, 2):  'Weihnachtsschließzeit 2024/25',
-    date(2025, 1, 3):  'Weihnachtsschließzeit 2024/25',
-    # Sommerschließzeit 2025: 18.08.–05.09.2025
-    date(2025, 8, 18): 'Sommerschließzeit 2025',
-    date(2025, 8, 19): 'Sommerschließzeit 2025',
-    date(2025, 8, 20): 'Sommerschließzeit 2025',
-    date(2025, 8, 21): 'Sommerschließzeit 2025',
-    date(2025, 8, 22): 'Sommerschließzeit 2025',
-    date(2025, 8, 25): 'Sommerschließzeit 2025',
-    date(2025, 8, 26): 'Sommerschließzeit 2025',
-    date(2025, 8, 27): 'Sommerschließzeit 2025',
-    date(2025, 8, 28): 'Sommerschließzeit 2025',
-    date(2025, 8, 29): 'Sommerschließzeit 2025',
-    date(2025, 9, 1):  'Sommerschließzeit 2025',
-    date(2025, 9, 2):  'Sommerschließzeit 2025',
-    date(2025, 9, 3):  'Sommerschließzeit 2025',
-    date(2025, 9, 4):  'Sommerschließzeit 2025',
-    date(2025, 9, 5):  'Sommerschließzeit 2025',
-    # Klausurtage Oktober 2025
-    date(2025, 10, 20): 'Klausurtage Oktober 2025',
-    date(2025, 10, 21): 'Klausurtage Oktober 2025',
-    # Weihnachtsschließzeit 2025/26: 22.12.2025–02.01.2026
-    date(2025, 12, 22): 'Weihnachtsschließzeit 2025/26',
-    date(2025, 12, 23): 'Weihnachtsschließzeit 2025/26',
-    date(2025, 12, 24): 'Weihnachtsschließzeit 2025/26',
-    date(2025, 12, 29): 'Weihnachtsschließzeit 2025/26',
-    date(2025, 12, 30): 'Weihnachtsschließzeit 2025/26',
-    date(2025, 12, 31): 'Weihnachtsschließzeit 2025/26',
+    # Weihnachtsschließzeit 2025/26 (Rest in 2026)
     date(2026, 1, 2):  'Weihnachtsschließzeit 2025/26',
     # Klausurtage Februar 2026
     date(2026, 2, 5):  'Klausurtage Februar 2026',
@@ -515,8 +491,8 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
     }} zurück.
     """
     ergebnis = {}
-    start = date(2025, 1, 1)
-    ende  = date(2026, 5, 31)
+    start = date(2026, 1, 1)
+    ende  = date(2026, 12, 31)
     aktuell = start
 
     while aktuell <= ende:
@@ -785,8 +761,8 @@ def render_html(tage, gesamt_wald, pm_wald, gesamt_haus, pm_haus):
     # Kalender-Blöcke
     def render_alle_monate(tage_flat):
         html = ''
-        y, m = 2025, 1
-        while (y, m) <= (2026, 5):
+        y, m = 2026, 1
+        while (y, m) <= (2026, 12):
             html += render_kalender_monat(y, m, tage_flat)
             m += 1
             if m > 12:
@@ -891,7 +867,7 @@ def render_html(tage, gesamt_wald, pm_wald, gesamt_haus, pm_haus):
 <div class="report-header">
   <h1>Betriebszustands-Analyse — Kita Wukaninchen</h1>
   <div class="meta">
-    Jan 2025 – Mai 2026 ·
+    Jan – Dez 2026 ·
     Waldkita: {arbeitstage_wald} Arbeitstage ·
     Hauskita: {arbeitstage_haus} Arbeitstage ·
     Erstellt {date.today().strftime("%d.%m.%Y")}

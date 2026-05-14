@@ -44,10 +44,10 @@ jobs:
             -o analyse/manuelle_annotationen.json \
             || echo "Kein Nextcloud-Stand vorhanden, nutze Seed aus Repo"
 
-      # Dienstplan-ODS herunterladen (alle Monate 2025 + 2026, bis zu 3 Versuche je Datei)
+      # Dienstplan-ODS herunterladen (nur 2026, bis zu 3 Versuche je Datei)
       - name: Dienstpläne herunterladen
         run: |
-          for year in 2025 2026; do
+          for year in 2026; do
             for month in 01 02 03 04 05 06 07 08 09 10 11 12; do
               dest="/tmp/dienstplan_${year}_${month}.ods"
               url="$NC_URL/remote.php/dav/files/$NC_USER/$DIENSTPLAN_NC_PATH/Dienstplan%20${year}_${month}.ods"
