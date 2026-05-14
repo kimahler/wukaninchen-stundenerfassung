@@ -3,22 +3,28 @@
 Betriebszustands-Analyse Wukaninchen Kita
 ==========================================
 Klassifiziert jeden Arbeitstag von Jan 2025 – Mai 2026 getrennt für
-Waldkita (Ü3) und Hauskita/Nest (U3) in einen von 7 Zuständen (A–G) + P.
+Waldkita (Ü3) und Hauskita/Nest (U3) in einen von 6 Zuständen (A–F) + P/W.
 
 Zustandsmodell (beide Kitas, unabhängig klassifiziert):
-  A = Normalbetrieb        – Vollbesetzung, kein Kranktag
-  B = Intern kompensiert   – Ausfall intern ausgeglichen (≥ Komfortgrenze)
-  C = Externe Vertretung   – externe/bezahlte Vertretung im Einsatz
-  D = Gesetzl. Minimum     – FK-Zahl auf gesetzlichem Minimum (auto)
-  E = Kinderzahlbegrenzung – Eltern aktiv gebeten, Kinder zu Hause zu lassen (manuell)
-  F = Notbetreuung         – formale Notbetreuung (Dienstplan-Header oder manuell)
-  G = Vollschließung       – Kita vollständig geschlossen (manuell)
+  A = Normalbetrieb        – Fachkräfte ≥ gesetzliches Minimum, keine Krankmeldungen
+  B = Intern kompensiert   – Krankmeldungen, aber FK-Zahl reicht (oder Stammpersonal-Engpass)
+  C = Externe Vertretung   – qualifizierter Fachkraftersatz (Svea/Anne) im Einsatz
+  D = Kinderzahlbegrenzung – Eltern gebeten, Kinder zu Hause zu lassen (Signal-Annotation)
+  E = Notbetreuung         – formale Notbetreuung (Signal-Annotation)
+  F = Vollschließung       – Kita vollständig geschlossen (Signal-Annotation)
   P = Geplant geschlossen  – Betriebsferien, Klausurtage (statisch)
+  W = Wochenende/Feiertag  – statisch
+
+Personalkategorien (3 Stufen):
+  1. Fachkraft (Stammpersonal mit pädagogischer Qualifikation)
+  2. Fachkraftersatz (extern qualifiziert — Svea, Anne)
+  3. Nicht-Fachkraft (Hilfskraft Stammpersonal + Freiwillige + externe Hilfskräfte)
 
 Datenquellen:
   1. Dienstplan ODS-Dateien (/tmp/dienstplan_YYYY_MM.ods)
   2. Vertretungspool ODS (/tmp/vertretungspool.ods)
   3. Manuelle Annotationen (manuelle_annotationen.json, Feld kita: wald|haus|beide)
+  4. Personalklassifikation: personal_klassifikation.md (Nextcloud-Belege)
 """
 
 import json
@@ -41,25 +47,40 @@ DIENSTPLAN_MONATE = [
     '2026_01', '2026_02', '2026_03', '2026_04', '2026_05',
 ]
 
-# Fachkräfte pro Kita — bestimmt durch Dienstplan-Sektion (Ü3 / Nest)
-FACHKRAEFTE_WALD = {'Ilai', 'Edu', 'Juli', 'Myriam', 'Almuth', 'Johanna'}
-FACHKRAEFTE_HAUS = {'Alina', 'Berit', 'Catharina', 'Izabella', 'Olli', 'Karo'}
+# ─── Personalklassifikation ──────────────────────────────────────────────────
+# Belege: personal_klassifikation.md (Nextcloud-Recherche 13.05.2026)
+# - Statistik Kita 01.03.2026: Schl. B (Erzieher/Sozialpäd./Kindheitspäd. = FK)
+# - Einstufungs-ODS 29.05.2025: Ilai/Juli/Alina/Berit Qualifikationen
+# - Convention_GÜLDENPFENNIG_Myriam_VEFA_25_26.pdf: Myriam = Freiwillige
+# - Personalmeldung: Almuth Kunze = Ansprechpartnerin (Verwaltung)
+
+# 1. Fachkraft (Stammpersonal, pädagogische Qualifikation)
+FACHKRAEFTE_WALD = {'Edu', 'Juli', 'Ilai'}            # Ilai in Ausbildung — zählt im weitesten Sinn
+FACHKRAEFTE_HAUS = {'Catharina', 'Berit', 'Alina'}    # Alina = Sozialassistentin (EK), zählt mit
 FACHKRAEFTE = FACHKRAEFTE_WALD | FACHKRAEFTE_HAUS
 
-# Externe Vertretungen (bezahlte Einsätze → Zustand C)
-VERTRETUNGSPOOL_EXTERN = {
-    'Anne', 'Svea', 'Charlene', 'Lene', 'Jana', 'Sabine',
-    'Liu', 'Liu Ness', 'Mariella', 'Bianca', 'Nina', 'Romane',
+# 2. Fachkraftersatz (extern qualifiziert — kann FK-Ausfall kompensieren → Zustand C)
+FACHKRAFTERSATZ_EXTERN = {'Svea', 'Anne'}
+
+# 3. Nicht-Fachkraft (Hilfskraft Stammpersonal + Freiwillige + externe Hilfskräfte)
+NICHT_FACHKRAEFTE_INTERN = {'Olli'}  # Hilfskraft Stammpersonal Haus
+FREIWILLIGE = {'Myriam', 'Lucia', 'Izabella', 'Paulin'}  # Freiwillige/Praktikant:innen
+NICHT_FACHKRAEFTE_EXTERN = {
+    'Sabine', 'Charlene', 'Jana', 'Liu', 'Liu Ness',
+    'Nina', 'Mariella', 'Bianca', 'Johanna', 'Paul',
+    'Lene', 'Romane',  # historisch
 }
+NICHT_FACHKRAEFTE = NICHT_FACHKRAEFTE_INTERN | FREIWILLIGE | NICHT_FACHKRAEFTE_EXTERN
+
+# Verwaltung — wird im Dashboard NICHT angezeigt (irrelevant für Betreuung)
+VERWALTUNG = {'Almuth'}
 
 # Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
 # Kinderzahlen verifiziert aus ÜbersichtKinderdaten.ods (Nextcloud, Sheet 2025-26)
-# Wald (Ü3, 20 Kinder): 20 ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK; Komfort ≥ 3
-FK_KOMFORT_MIN_WALD = 3
-FK_GESETZ_MIN_WALD  = 2
-# Haus (U3, 12 Kinder): 12 ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 FK; Komfort ≥ 4
-FK_KOMFORT_MIN_HAUS = 4
-FK_GESETZ_MIN_HAUS  = 3
+# Wald (Ü3, 20 Kinder): 20 ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK
+# Haus (U3, 12 Kinder): 12 ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 FK
+FK_GESETZ_MIN_WALD = 2
+FK_GESETZ_MIN_HAUS = 3
 
 # Mi (2) und Fr (4) haben strukturell keine Spätbetreuung → nie flaggen
 KEIN_SPAET_WOCHENTAGE = {2, 4}
@@ -67,31 +88,29 @@ KEIN_SPAET_WOCHENTAGE = {2, 4}
 ZUSTAND_FARBEN = {
     'A': '#27ae60',  # grün
     'B': '#a8d8a8',  # hellgrün
-    'C': '#f39c12',  # gelb-orange
-    'D': '#e67e22',  # orange
-    'E': '#fd79a8',  # rosa (manuell: Kinderzahlbegrenzung)
-    'F': '#e74c3c',  # rot (Notbetreuung)
-    'G': '#7b241c',  # dunkelrot (Vollschließung)
+    'C': '#f39c12',  # gelb-orange (Externe Vertretung)
+    'D': '#fd79a8',  # rosa (Kinderzahlbegrenzung, Signal)
+    'E': '#e74c3c',  # rot (Notbetreuung, Signal)
+    'F': '#7b241c',  # dunkelrot (Vollschließung, Signal)
     'P': '#b2bec3',  # hell-grau (geplante Schließung)
     'W': '#dfe6e9',  # sehr hell (Wochenende/Feiertag)
     '?': '#95a5a6',  # unbekannt
 }
 
 ZUSTAND_NAMEN = {
-    'A': 'Vollbetrieb',
+    'A': 'Normalbetrieb',
     'B': 'Intern kompensiert',
     'C': 'Externe Vertretung',
-    'D': 'Minimalbetrieb',
-    'E': 'Kinderzahlbegrenzung',
-    'F': 'Notbetreuung',       # nur aus Signal-Annotation
-    'G': 'Vollschließung',      # nur aus Signal-Annotation
+    'D': 'Kinderzahlbegrenzung',  # Signal-Annotation
+    'E': 'Notbetreuung',           # Signal-Annotation
+    'F': 'Vollschließung',          # Signal-Annotation
     'P': 'Geplant geschlossen',
     'W': 'Feiertag',
     '?': 'Daten fehlen',
 }
 
 # Schweregrade für Diagnose-Ausgabe (höherer Wert = kritischer)
-SCHWERE = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'G': 7, 'P': 0, 'W': 0, '?': 0}
+SCHWERE = {'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6, 'P': 0, 'W': 0, '?': 0}
 
 # Brandenburg Feiertage 2025/2026
 FEIERTAGE = {
@@ -251,12 +270,16 @@ def parse_personal_status(rows):
 def analyse_dienstplaene():
     """
     Gibt zurück: {date → {
-      'wald': {'fk_da': [...], 'krank': [...], 'vertretung_da': [...]},
-      'haus': {'fk_da': [...], 'krank': [...], 'vertretung_da': [...]},
+      'wald': {
+        'fk_da': [...],          # Fachkräfte Stammpersonal anwesend
+        'krank': [...],          # Fachkräfte krank
+        'fkers_da': [...],       # Fachkraftersatz extern anwesend
+        'nfk_da': [...],         # Nicht-Fachkräfte anwesend (Hilfskraft + Freiwillige + ext. Hilfe)
+      },
+      'haus': {...gleich wie wald...},
       'notbetreuung_header': bool,
       'monat': str,
-      'spaet_workers_wald': [...],
-      'spaetbetreuung_ausgefallen': bool,  ← gesetzt nach Post-Processing
+      'spaetbetreuung_ausgefallen': bool,  ← später per Signal-Annotation
     }}
     """
     tage_info = {}
@@ -289,48 +312,60 @@ def analyse_dienstplaene():
 
                 fk_wald, fk_haus = [], []
                 krank_wald, krank_haus = [], []
-                vert_wald, vert_haus = [], []
-                spaet_wald = []
+                fkers_wald, fkers_haus = [], []
+                nfk_wald, nfk_haus = [], []
 
                 for p in personal:
                     name = p['name']
                     gruppe = p['gruppe']
                     t = p['tage'].get(wt, {})
                     status = t.get('status', 'frei')
-                    bis = t.get('bis', '')
 
                     if status == 'work':
-                        # FK-Zählung nach Sektion
-                        if name in FACHKRAEFTE_WALD and gruppe == 'Ü3':
+                        # Sektion-basierte Zuordnung
+                        ist_wald = (gruppe == 'Ü3')
+                        ist_haus = (gruppe == 'Nest')
+                        if not (ist_wald or ist_haus):
+                            continue  # 'Weiteres'-Sektion ignorieren
+
+                        # 1. Fachkraft Stammpersonal
+                        if name in FACHKRAEFTE_WALD and ist_wald:
                             fk_wald.append(name)
-                        if name in FACHKRAEFTE_HAUS and gruppe == 'Nest':
+                        elif name in FACHKRAEFTE_HAUS and ist_haus:
                             fk_haus.append(name)
-                        # Externe Vertretungen nach Sektion
-                        if name in VERTRETUNGSPOOL_EXTERN:
-                            if gruppe == 'Ü3':
-                                vert_wald.append(name)
-                            elif gruppe == 'Nest':
-                                vert_haus.append(name)
-                        # Spätdienst: nur Wald-FK mit bis ≥ 16:00 und < 18:00
-                        if name in FACHKRAEFTE_WALD and gruppe == 'Ü3':
-                            if re.match(r'^\d{1,2}:\d{2}$', bis):
-                                h_b, m_b = map(int, bis.split(':'))
-                                total = h_b * 60 + m_b
-                                if 16 * 60 <= total < 18 * 60:
-                                    spaet_wald.append(name)
+                        # 2. Fachkraftersatz (extern, qualifiziert)
+                        elif name in FACHKRAFTERSATZ_EXTERN:
+                            if ist_wald:
+                                fkers_wald.append(name)
+                            else:
+                                fkers_haus.append(name)
+                        # 3. Nicht-Fachkraft (Hilfskraft + Freiwillige + ext. Hilfe)
+                        elif name in NICHT_FACHKRAEFTE:
+                            if ist_wald:
+                                nfk_wald.append(name)
+                            else:
+                                nfk_haus.append(name)
+                        # Verwaltung (Almuth) wird ignoriert
+                        # Unbekannte Namen werden ebenfalls ignoriert
 
                     elif status == 'K':
+                        # Krankmeldung — nur Fachkräfte zählen
                         if name in FACHKRAEFTE_WALD and gruppe == 'Ü3':
                             krank_wald.append(name)
-                        if name in FACHKRAEFTE_HAUS and gruppe == 'Nest':
+                        elif name in FACHKRAEFTE_HAUS and gruppe == 'Nest':
                             krank_haus.append(name)
 
                 tage_info[arbeitstag] = {
-                    'wald': {'fk_da': fk_wald, 'krank': krank_wald, 'vertretung_da': vert_wald},
-                    'haus': {'fk_da': fk_haus, 'krank': krank_haus, 'vertretung_da': vert_haus},
+                    'wald': {
+                        'fk_da': fk_wald, 'krank': krank_wald,
+                        'fkers_da': fkers_wald, 'nfk_da': nfk_wald,
+                    },
+                    'haus': {
+                        'fk_da': fk_haus, 'krank': krank_haus,
+                        'fkers_da': fkers_haus, 'nfk_da': nfk_haus,
+                    },
                     'notbetreuung_header': hat_notbetreuung_header,
                     'monat': monat,
-                    'spaet_workers_wald': spaet_wald,
                 }
 
     # Spätbetreuung wird nur per Signal-Annotation gesetzt (Hauskita)
@@ -341,13 +376,16 @@ def analyse_dienstplaene():
 
 
 def analyse_vertretungspool_2026():
-    """Gibt zurück: {date → [namen]} für Einsatzdaten im Vertretungspool 2026."""
+    """Gibt zurück: {date → {'fkers': [...], 'nfk': [...]}}.
+
+    Trennt qualifizierte Vertretung (Svea/Anne) von Hilfskräften (Charlene/Jana/...).
+    """
     fp = os.path.join(ODS_DIR, 'vertretungspool.ods')
     if not os.path.exists(fp):
         return {}
     sheets = ods_sheets(fp)
 
-    einsatz_tage = defaultdict(list)
+    einsatz_tage = defaultdict(lambda: {'fkers': [], 'nfk': []})
 
     for name, rows in sheets.items():
         if '2026' not in name or 'Stunden' not in name:
@@ -357,7 +395,7 @@ def analyse_vertretungspool_2026():
         if rows:
             for idx, val in enumerate(rows[0]):
                 v = val.strip()
-                if v in ('Svea', 'Anne', 'Charlene', 'Jana', 'Liu', 'Liu Ness'):
+                if v in FACHKRAFTERSATZ_EXTERN or v in NICHT_FACHKRAEFTE_EXTERN:
                     person_cols[v] = idx
 
         for row in rows[2:]:
@@ -377,50 +415,52 @@ def analyse_vertretungspool_2026():
                         continue
                 except ValueError:
                     continue
-                if person in VERTRETUNGSPOOL_EXTERN:
-                    einsatz_tage[d].append(person)
+                if person in FACHKRAFTERSATZ_EXTERN:
+                    einsatz_tage[d]['fkers'].append(person)
+                elif person in NICHT_FACHKRAEFTE_EXTERN:
+                    einsatz_tage[d]['nfk'].append(person)
 
     return dict(einsatz_tage)
 
 
 # ─── Klassifikation ───────────────────────────────────────────────────────────
 
-def klassifiziere_kita(fk_da, krank, vertretung_da, fk_komfort_min, fk_gesetz_min, notbetreuung_header=False):
+def klassifiziere_kita(fk_da, krank, fkers_da, fk_gesetz_min):
     """
-    Klassifiziert eine einzelne Kita für einen Tag.
-    Gibt (zustand, begruendung) zurück.
+    Klassifiziert eine einzelne Kita für einen Tag (Auto-Klassifikation A/B/C).
 
-    F und G werden NICHT auto-generiert — nur aus Signal-Annotationen.
-    Alle Tage ohne ausreichende FK-Zahl → D (Minimalbetrieb), solange kein Signal.
+    Signal-Zustände D/E/F überschreiben dies via Annotationen.
+
+    Logik:
+      - C: qualifizierter Fachkraftersatz (Svea/Anne) im Einsatz
+      - A: ≥ gesetzliches Minimum FK, keine Krankmeldungen
+      - B: alles andere (Krankmeldung oder unter Minimum, kein Signal)
+      - ?: keine Daten
     """
     n_fk    = len(fk_da)
     n_krank = len(krank)
-    hat_ext = len(vertretung_da) > 0
+    n_fkers = len(fkers_da)
 
-    # Externe Vertretung (muss vor Keine-Daten-Check stehen)
-    if hat_ext:
-        return 'C', f'Externe Vertretung im Einsatz ({n_fk} FK gesamt im Dienstplan)'
+    # C — Externer qualifizierter Fachkraftersatz im Einsatz
+    if n_fkers > 0:
+        return 'C', f'Externe Vertretung: {n_fkers} qualifizierter Fachkraftersatz im Einsatz ({n_fk} Fachkraft/Fachkräfte Stammpersonal)'
 
     # Keine Daten
     if n_fk == 0 and n_krank == 0:
-        return '?', 'Keine FK-Daten im Dienstplan'
+        return '?', 'Keine Daten im Dienstplan'
 
-    # Komfortgrenze erfüllt → A oder B
-    if n_fk >= fk_komfort_min:
-        if n_krank == 0:
-            return 'A', f'Vollbetrieb: {n_fk} FK im Einsatz'
-        return 'B', f'Intern kompensiert: {n_fk} FK im Einsatz trotz {n_krank} Krankmeldung(en)'
+    # A — Normalbetrieb (≥ gesetzliches Minimum, keine Krankmeldung)
+    if n_krank == 0 and n_fk >= fk_gesetz_min:
+        return 'A', f'Normalbetrieb: {n_fk} Fachkraft/Fachkräfte im Einsatz'
 
-    # Unter Komfortgrenze (≥ gesetz_min oder darunter) → D
-    # F/G nur aus Signal — kein auto-Notbetreuung
+    # B — Intern kompensiert (Krankmeldung oder unter Minimum, kein Signal)
     if n_fk > 0:
-        return 'D', f'Minimalbetrieb: {n_fk} FK im Einsatz (Komfortgrenze: {fk_komfort_min} FK), kein Signal über Notbetreuung'
+        if n_krank > 0:
+            return 'B', f'Intern kompensiert: {n_fk} Fachkraft/Fachkräfte trotz {n_krank} Krankmeldung(en)'
+        return 'B', f'Unterbesetzt ohne Signal: {n_fk} Fachkraft/Fachkräfte (Minimum: {fk_gesetz_min})'
 
-    # 0 FK aber Krankmeldungen im Dienstplan → Status unklar ohne Signal
-    if n_krank > 0:
-        return '?', f'0 FK im Dienstplan ({n_krank} Krankmeldung(en)) — kein Signal, Status unklar'
-
-    return '?', 'Keine FK-Daten verfügbar'
+    # 0 FK aber Krankmeldungen → Status unklar
+    return '?', f'0 Fachkräfte im Dienstplan ({n_krank} Krankmeldung(en)) — kein Signal'
 
 
 def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
@@ -461,24 +501,29 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
             continue
 
         info = tage_info[aktuell]
-        spaet_ausgefallen = info.get('spaetbetreuung_ausgefallen', False)
-        notbetreuung_hdr  = info.get('notbetreuung_header', False)
 
-        # Vertretungspool 2026 ergänzen (beide Kitas, da Kita unbekannt)
-        fk_wald  = list(info['wald']['fk_da'])
-        kr_wald  = list(info['wald']['krank'])
-        vt_wald  = list(info['wald']['vertretung_da'])
-        fk_haus  = list(info['haus']['fk_da'])
-        kr_haus  = list(info['haus']['krank'])
-        vt_haus  = list(info['haus']['vertretung_da'])
+        fk_wald     = list(info['wald']['fk_da'])
+        kr_wald     = list(info['wald']['krank'])
+        fkers_wald  = list(info['wald']['fkers_da'])
+        nfk_wald    = list(info['wald']['nfk_da'])
+        fk_haus     = list(info['haus']['fk_da'])
+        kr_haus     = list(info['haus']['krank'])
+        fkers_haus  = list(info['haus']['fkers_da'])
+        nfk_haus    = list(info['haus']['nfk_da'])
 
+        # Vertretungspool 2026 ergänzen — Kita unbekannt, daher beiden zuordnen
         if aktuell in pool_2026:
-            for p in pool_2026[aktuell]:
-                if p in VERTRETUNGSPOOL_EXTERN:
-                    if p not in vt_wald:
-                        vt_wald.append(p)
-                    if p not in vt_haus:
-                        vt_haus.append(p)
+            pool = pool_2026[aktuell]
+            for p in pool.get('fkers', []):
+                if p not in fkers_wald:
+                    fkers_wald.append(p)
+                if p not in fkers_haus:
+                    fkers_haus.append(p)
+            for p in pool.get('nfk', []):
+                if p not in nfk_wald:
+                    nfk_wald.append(p)
+                if p not in nfk_haus:
+                    nfk_haus.append(p)
 
         # Waldkita klassifizieren
         if aktuell in ann_wald and ann_wald[aktuell].get('zustand'):
@@ -487,10 +532,7 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
             b_wald = ann_w.get('kommentar', f'Manuelle Annotation: {z_wald}')
             v_wald = True
         else:
-            z_wald, b_wald = klassifiziere_kita(
-                fk_wald, kr_wald, vt_wald,
-                FK_KOMFORT_MIN_WALD, FK_GESETZ_MIN_WALD, notbetreuung_hdr,
-            )
+            z_wald, b_wald = klassifiziere_kita(fk_wald, kr_wald, fkers_wald, FK_GESETZ_MIN_WALD)
             v_wald = False
 
         # Hauskita klassifizieren (Spätbetreuung nur hier, via Annotation)
@@ -503,20 +545,14 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
                 b_haus = ann_h.get('kommentar', f'Manuelle Annotation: {z_haus}')
                 v_haus = True
             else:
-                z_haus, b_haus = klassifiziere_kita(
-                    fk_haus, kr_haus, vt_haus,
-                    FK_KOMFORT_MIN_HAUS, FK_GESETZ_MIN_HAUS, notbetreuung_hdr,
-                )
+                z_haus, b_haus = klassifiziere_kita(fk_haus, kr_haus, fkers_haus, FK_GESETZ_MIN_HAUS)
                 v_haus = False
         else:
-            z_haus, b_haus = klassifiziere_kita(
-                fk_haus, kr_haus, vt_haus,
-                FK_KOMFORT_MIN_HAUS, FK_GESETZ_MIN_HAUS, notbetreuung_hdr,
-            )
+            z_haus, b_haus = klassifiziere_kita(fk_haus, kr_haus, fkers_haus, FK_GESETZ_MIN_HAUS)
             v_haus = False
 
         # Spätbetreuung sinnlos bei Vollschließung / geplantem Schließtag
-        if s_haus and z_haus in ('G', 'P', 'W'):
+        if s_haus and z_haus in ('F', 'P', 'W'):
             s_haus = False
 
         ergebnis[aktuell] = {
@@ -524,17 +560,21 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
                 'zustand': z_wald,
                 'begruendung': b_wald,
                 'verifiziert': v_wald,
-                'spaetbetreuung_ausgefallen': False,  # Spätbetreuung nur in Hauskita
-                'n_fk': len(fk_wald),
-                'fk_namen': sorted(fk_wald),
+                'spaetbetreuung_ausgefallen': False,
+                'n_fachkraefte': len(fk_wald),
+                'fachkraefte_namen': sorted(fk_wald),
+                'fachkraftersatz_namen': sorted(fkers_wald),
+                'nicht_fachkraefte_namen': sorted(nfk_wald),
             },
             'haus': {
                 'zustand': z_haus,
                 'begruendung': b_haus,
                 'verifiziert': v_haus,
                 'spaetbetreuung_ausgefallen': s_haus,
-                'n_fk': len(fk_haus),
-                'fk_namen': sorted(fk_haus),
+                'n_fachkraefte': len(fk_haus),
+                'fachkraefte_namen': sorted(fk_haus),
+                'fachkraftersatz_namen': sorted(fkers_haus),
+                'nicht_fachkraefte_namen': sorted(nfk_haus),
             },
         }
         aktuell += timedelta(days=1)
@@ -618,8 +658,8 @@ def render_kalender_monat(year, month, tage_flat):
         else:
             hatch_style = f'background: {farbe};'
 
-        text_color = '#fff' if z in ('F', 'G') else 'rgba(0,0,0,0.65)'
-        border_class = ' kritisch' if z in ('F', 'G') else ''
+        text_color = '#fff' if z in ('E', 'F') else 'rgba(0,0,0,0.65)'
+        border_class = ' kritisch' if z in ('E', 'F') else ''
 
         html += (
             f'<div class="tag-zelle{border_class}" style="{hatch_style}" title="{tooltip}">'
@@ -636,8 +676,8 @@ def render_kalender_monat(year, month, tage_flat):
 
 
 def render_statistik_tabelle(gesamt, pro_monat, kita_label):
-    zustand_reihenfolge = ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']
-    operativ = ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']
+    zustand_reihenfolge = ['A', 'B', 'C', 'D', 'E', 'F', '?']
+    operativ = zustand_reihenfolge
     monate = sorted(pro_monat.keys())
 
     arbeitstage_gesamt = sum(v for k, v in gesamt.items() if k not in ('W', 'P'))
@@ -647,7 +687,7 @@ def render_statistik_tabelle(gesamt, pro_monat, kita_label):
     html += '<th>Monat</th>'
     for z in zustand_reihenfolge:
         farbe = ZUSTAND_FARBEN[z]
-        html += f'<th style="background:{farbe};color:{"#fff" if z in ("F","G") else "#222"}">{z}</th>'
+        html += f'<th style="background:{farbe};color:{"#fff" if z in ("E","F") else "#222"}">{z}</th>'
     html += '<th>Arbeitstage</th></tr></thead><tbody>'
 
     for monat_key in monate:
@@ -688,7 +728,7 @@ def render_html(tage, gesamt_wald, pm_wald, gesamt_haus, pm_haus):
 
     def make_datasets(pm):
         datasets = []
-        for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G']:
+        for z in ['A', 'B', 'C', 'D', 'E', 'F']:
             data = [pm.get(m, {}).get(z, 0) for m in monate]
             if any(v > 0 for v in data):
                 datasets.append({
@@ -727,7 +767,7 @@ def render_html(tage, gesamt_wald, pm_wald, gesamt_haus, pm_haus):
         if z in ('W',):
             continue
         farbe = ZUSTAND_FARBEN[z]
-        text_color = '#fff' if z in ('F', 'G') else '#222'
+        text_color = '#fff' if z in ('E', 'F') else '#222'
         legende_html += (
             f'<div class="legende-item">'
             f'<div class="legende-farbe" style="background:{farbe};color:{text_color}">{z}</div>'
@@ -937,14 +977,14 @@ def main():
     arbeitstage_haus = sum(v for k, v in gesamt_haus.items() if k not in ('W', 'P'))
 
     print(f'Waldkita ({arbeitstage_wald} Arbeitstage):')
-    for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']:
+    for z in ['A', 'B', 'C', 'D', 'E', 'F', '?']:
         n = gesamt_wald.get(z, 0)
         if n > 0:
             pct = f'{100*n/arbeitstage_wald:.1f}%' if arbeitstage_wald > 0 else ''
             print(f'  {z} ({ZUSTAND_NAMEN[z]:<22}): {n:>3}  {pct}')
 
     print(f'\nHauskita ({arbeitstage_haus} Arbeitstage):')
-    for z in ['A', 'B', 'C', 'D', 'E', 'F', 'G', '?']:
+    for z in ['A', 'B', 'C', 'D', 'E', 'F', '?']:
         n = gesamt_haus.get(z, 0)
         if n > 0:
             pct = f'{100*n/arbeitstage_haus:.1f}%' if arbeitstage_haus > 0 else ''
@@ -958,7 +998,7 @@ def main():
     if spaet_ausfaelle > 0:
         print(f'\nSpätbetreuung ausgefallen (Haus): {spaet_ausfaelle} Tage')
 
-    # JSON Export (neues Schema: wald/haus nested)
+    # JSON Export (neues Schema: wald/haus nested, 3-Personalkategorien)
     json_out = os.path.join(SCRIPT_DIR, 'betriebszustand_tage.json')
     with open(json_out, 'w', encoding='utf-8') as f:
         json.dump(
@@ -968,17 +1008,21 @@ def main():
                         'zustand': v['wald']['zustand'],
                         'begruendung': v['wald']['begruendung'],
                         'verifiziert': v['wald']['verifiziert'],
-                        'spaetbetreuung_ausgefallen': False,  # Spätbetreuung nur in Hauskita
-                        'n_fk': v['wald'].get('n_fk'),
-                        'fk_namen': v['wald'].get('fk_namen', []),
+                        'spaetbetreuung_ausgefallen': False,  # nur Hauskita
+                        'n_fachkraefte': v['wald'].get('n_fachkraefte', 0),
+                        'fachkraefte_namen': v['wald'].get('fachkraefte_namen', []),
+                        'fachkraftersatz_namen': v['wald'].get('fachkraftersatz_namen', []),
+                        'nicht_fachkraefte_namen': v['wald'].get('nicht_fachkraefte_namen', []),
                     },
                     'haus': {
                         'zustand': v['haus']['zustand'],
                         'begruendung': v['haus']['begruendung'],
                         'verifiziert': v['haus']['verifiziert'],
                         'spaetbetreuung_ausgefallen': v['haus']['spaetbetreuung_ausgefallen'],
-                        'n_fk': v['haus'].get('n_fk'),
-                        'fk_namen': v['haus'].get('fk_namen', []),
+                        'n_fachkraefte': v['haus'].get('n_fachkraefte', 0),
+                        'fachkraefte_namen': v['haus'].get('fachkraefte_namen', []),
+                        'fachkraftersatz_namen': v['haus'].get('fachkraftersatz_namen', []),
+                        'nicht_fachkraefte_namen': v['haus'].get('nicht_fachkraefte_namen', []),
                     },
                 }
                 for d, v in sorted(tage.items())

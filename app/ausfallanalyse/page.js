@@ -3,60 +3,57 @@ import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 
 const FARBEN = {
-  A: '#27ae60', B: '#a8d8a8', C: '#f39c12', D: '#5dade2',
-  E: '#fd79a8', F: '#e74c3c', G: '#7b241c', P: '#b2bec3',
-  W: '#dfe6e9', '?': '#95a5a6',
+  A: '#27ae60', B: '#a8d8a8', C: '#f39c12',
+  D: '#fd79a8', E: '#e74c3c', F: '#7b241c',
+  P: '#b2bec3', W: '#dfe6e9', '?': '#95a5a6',
 };
 const NAMEN = {
-  A: 'Vollbetrieb', B: 'Intern kompensiert', C: 'Externe Vertretung',
-  D: 'Minimalbetrieb', E: 'Kinderzahlbegrenzung', F: 'Notbetreuung',
-  G: 'Vollschließung', P: 'Geplant geschlossen',
-  W: 'Feiertag', '?': 'Daten fehlen',
+  A: 'Normalbetrieb', B: 'Intern kompensiert', C: 'Externe Vertretung',
+  D: 'Kinderzahlbegrenzung', E: 'Notbetreuung', F: 'Vollschließung',
+  P: 'Geplant geschlossen', W: 'Feiertag', '?': 'Daten fehlen',
 };
 const MONAT_LANG = [
   'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
 const MONAT_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-// FK-Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
-// Kinderzahlen verifiziert aus ÜbersichtKinderdaten.ods (Nextcloud, Sheet 2025-26)
-// Wald Ü3: 20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Minimum 2 FK
-// Haus U3: 12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Minimum 3 FK
+// Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
+// Wald Ü3: 20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Minimum 2 Fachkräfte
+// Haus U3: 12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Minimum 3 Fachkräfte
 const FK_GESETZ_MIN = { wald: 2, haus: 3 };
-const FK_KOMFORT_MIN = { wald: 3, haus: 4 };
 const WDAY_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
 function fmt(year, month, day) {
   return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-function TagModal({ day, kita, fkMin, fkKomfortMin, onClose }) {
+function TagModal({ day, kita, fkMin, onClose }) {
   if (!day) return null;
   const { date, info } = day;
   const z = info?.zustand || '?';
-  const nFk = info?.n_fk;
-  const fkNamen = info?.fk_namen;
+  const nFk = info?.n_fachkraefte;
+  const fkNamen = info?.fachkraefte_namen || [];
+  const fkErsatzNamen = info?.fachkraftersatz_namen || [];
+  const nichtFkNamen = info?.nicht_fachkraefte_namen || [];
   const verifiziert = info?.verifiziert;
   const [y, mo, d] = date.split('-').map(Number);
   const wday = new Date(y, mo - 1, d).getDay();
 
   let fkStatus = null;
   if (nFk != null && !['W', 'P', '?'].includes(z)) {
-    if (nFk >= fkKomfortMin)
-      fkStatus = `${nFk} FK im Einsatz — Komfortgrenze (≥${fkKomfortMin}) erfüllt`;
-    else if (nFk >= fkMin)
-      fkStatus = `${nFk} FK im Einsatz — gesetzl. Minimum (${fkMin}) erfüllt`;
+    if (nFk >= fkMin)
+      fkStatus = `${nFk} Fachkraft${nFk === 1 ? '' : 'kräfte'} im Einsatz — gesetzl. Minimum (${fkMin}) erfüllt`;
     else if (nFk > 0)
-      fkStatus = `${nFk} FK im Einsatz — unterbesetzt (Minimum: ${fkMin})`;
+      fkStatus = `${nFk} Fachkraft${nFk === 1 ? '' : 'kräfte'} im Einsatz — unter Minimum (${fkMin})`;
     else
-      fkStatus = 'Keine FK im Dienstplan eingetragen';
+      fkStatus = 'Keine Fachkraft im Dienstplan eingetragen';
   }
 
   const quelle = verifiziert
     ? `Manuelle Annotation — Signal (${kita === 'wald' ? 'Wald-Gruppe' : 'Hauskita-Gruppe'})`
     : `Dienstplan ${y}_${String(mo).padStart(2, '0')} (auto-klassifiziert)`;
 
-  const textOnColor = ['F', 'G'].includes(z) ? '#fff' : 'rgba(0,0,0,0.7)';
+  const textOnColor = ['E', 'F'].includes(z) ? '#fff' : 'rgba(0,0,0,0.7)';
 
   return (
     <div
@@ -83,17 +80,35 @@ function TagModal({ day, kita, fkMin, fkKomfortMin, onClose }) {
           </div>
           <div>
             <div className="text-sm font-semibold text-gray-800">{NAMEN[z] || z}</div>
-            {['F', 'G', 'E'].includes(z) && (
+            {['D', 'E', 'F'].includes(z) && (
               <div className="text-[11px] text-red-400 mt-0.5">Nur aus Signal-Nachricht</div>
             )}
           </div>
         </div>
 
         {fkStatus && (
-          <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 mb-3">
-            <div>{fkStatus}</div>
-            {fkNamen && fkNamen.length > 0 && (
-              <div className="text-[11px] text-gray-400 mt-1">{fkNamen.join(', ')}</div>
+          <div className="text-xs text-gray-600 bg-gray-50 rounded-lg p-3 mb-3 space-y-2">
+            <div className="font-medium text-gray-700">{fkStatus}</div>
+
+            {fkNamen.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-0.5">Fachkraft</div>
+                <div className="text-[11px] text-gray-600">{fkNamen.join(', ')}</div>
+              </div>
+            )}
+
+            {fkErsatzNamen.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-amber-500 mb-0.5">Fachkraftersatz (extern)</div>
+                <div className="text-[11px] text-gray-600">{fkErsatzNamen.join(', ')}</div>
+              </div>
+            )}
+
+            {nichtFkNamen.length > 0 && (
+              <div>
+                <div className="text-[10px] uppercase tracking-wide text-gray-400 mb-0.5">Nicht-Fachkraft</div>
+                <div className="text-[11px] text-gray-500">{nichtFkNamen.join(', ')}</div>
+              </div>
             )}
           </div>
         )}
@@ -102,7 +117,7 @@ function TagModal({ day, kita, fkMin, fkKomfortMin, onClose }) {
           <span className="font-medium text-gray-500">Quelle:</span>{' '}{quelle}
         </div>
 
-        {info?.spaetbetreuung_ausgefallen && !['G', 'P', 'W'].includes(z) && (
+        {info?.spaetbetreuung_ausgefallen && !['F', 'P', 'W'].includes(z) && (
           <div className="text-xs text-orange-600 bg-orange-50 rounded-lg p-2 mt-3">
             Spätbetreuung ausgefallen (Hauskita 16:00–18:00 Uhr)
           </div>
@@ -128,9 +143,9 @@ function MonatKalender({ year, month, tage, fkMin, onDayClick }) {
     const info = tage?.[key];
     const z = info?.zustand || '?';
     const bg = FARBEN[z] || '#ccc';
-    const textCol = ['F', 'G'].includes(z) ? '#fff' : 'rgba(0,0,0,0.65)';
+    const textCol = ['E', 'F'].includes(z) ? '#fff' : 'rgba(0,0,0,0.65)';
     const spaet = info?.spaetbetreuung_ausgefallen;
-    const nFk = info?.n_fk;
+    const nFk = info?.n_fachkraefte;
     const showFkCount = nFk != null && !['W', 'P', '?'].includes(z);
 
     cells.push(
@@ -145,7 +160,7 @@ function MonatKalender({ year, month, tage, fkMin, onDayClick }) {
         {showFkCount && (
           <span className="text-[7px] leading-none mt-0.5 opacity-80" style={{ color: textCol }}>{nFk}/{fkMin}</span>
         )}
-        {spaet && !['G', 'P', 'W'].includes(z) && (
+        {spaet && !['F', 'P', 'W'].includes(z) && (
           <span
             className="absolute bottom-0.5 right-0.5"
             style={{ width: 0, height: 0, borderLeft: '10px solid transparent', borderBottom: '10px solid #e74c3c' }}
@@ -171,20 +186,19 @@ function MonatKalender({ year, month, tage, fkMin, onDayClick }) {
 }
 
 function SummaryKarten({ tage }) {
-  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0, G: 0 };
+  const counts = { A: 0, B: 0, C: 0, D: 0, E: 0, F: 0 };
   for (const [, info] of Object.entries(tage || {})) {
     const z = info?.zustand;
     if (z && counts[z] !== undefined) counts[z]++;
   }
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const karten = [
-    { z: 'A', label: 'Vollbetrieb' },
+    { z: 'A', label: 'Normalbetrieb' },
     { z: 'B', label: 'Intern komp.' },
     { z: 'C', label: 'Externe Vertr.' },
-    { z: 'D', label: 'Minimalbetrieb' },
-    { z: 'E', label: 'Kinderzahl-Begr.' },
-    { z: 'F', label: 'Notbetreuung' },
-    { z: 'G', label: 'Vollschließung' },
+    { z: 'D', label: 'Kinderzahl-Begr.' },
+    { z: 'E', label: 'Notbetreuung' },
+    { z: 'F', label: 'Vollschließung' },
   ];
   return (
     <div className="space-y-1">
@@ -220,7 +234,7 @@ function VerlaufChart({ tage }) {
     const months = [...monthSet].sort();
     const labels = months.map(m => MONAT_KURZ[parseInt(m.split('-')[1]) - 1]);
 
-    const zustande = ['A', 'B', 'C', 'D', 'E', 'F', 'G'];
+    const zustande = ['A', 'B', 'C', 'D', 'E', 'F'];
     const totals = months.map(m => {
       let tot = 0;
       for (const [d, info] of Object.entries(tage)) {
@@ -326,7 +340,6 @@ export default function AusfallanalysePage() {
           day={selectedDay}
           kita={kita}
           fkMin={FK_GESETZ_MIN[kita]}
-          fkKomfortMin={FK_KOMFORT_MIN[kita]}
           onClose={() => setSelectedDay(null)}
         />
       )}
@@ -403,36 +416,31 @@ export default function AusfallanalysePage() {
                 {[
                   {
                     z: 'A',
-                    desc: `≥${FK_KOMFORT_MIN[kita]} FK im Einsatz, kein Kranktag. Komfortgrenze erfüllt.`,
+                    desc: `≥${FK_GESETZ_MIN[kita]} Fachkräfte im Einsatz, keine Krankmeldung.`,
                     quelle: 'Auto',
                   },
                   {
                     z: 'B',
-                    desc: `≥${FK_KOMFORT_MIN[kita]} FK im Einsatz trotz Kranktag. Komfortgrenze durch anwesende Kolleg:innen gedeckt.`,
+                    desc: 'Krankmeldungen vorhanden oder unter gesetzlichem Minimum — intern kompensiert ohne Signal.',
                     quelle: 'Auto',
                   },
                   {
                     z: 'C',
-                    desc: 'Externe Vertretungskraft aus dem Vertretungspool im Einsatz.',
+                    desc: 'Qualifizierter Fachkraftersatz (Svea, Anne) im Einsatz.',
                     quelle: 'Auto',
                   },
                   {
                     z: 'D',
-                    desc: `Dienstplan zeigt ${FK_GESETZ_MIN[kita]}–${FK_KOMFORT_MIN[kita] - 1} FK. Kein Signal über Notbetreuung — gilt als Normalbetrieb. FK-Zahl im Kalenderfeld.`,
-                    quelle: 'Auto',
-                  },
-                  {
-                    z: 'E',
                     desc: 'Eltern aktiv gebeten, Kinder wenn möglich zu Hause zu lassen.',
                     quelle: 'Signal',
                   },
                   {
-                    z: 'F',
+                    z: 'E',
                     desc: 'Formale Notbetreuung: beide Gruppen zusammengelegt in der Hauskita.',
                     quelle: 'Signal',
                   },
                   {
-                    z: 'G',
+                    z: 'F',
                     desc: 'Kita vollständig geschlossen, kein Betreuungsangebot.',
                     quelle: 'Signal',
                   },
@@ -457,7 +465,7 @@ export default function AusfallanalysePage() {
                       className="w-6 h-6 rounded flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5"
                       style={{
                         background: FARBEN[z] || '#dfe6e9',
-                        color: ['F', 'G'].includes(z) ? '#fff' : 'rgba(0,0,0,0.65)',
+                        color: ['E', 'F'].includes(z) ? '#fff' : 'rgba(0,0,0,0.65)',
                       }}
                     >
                       {z}
@@ -508,22 +516,20 @@ export default function AusfallanalysePage() {
                   Schwellenwerte — {kita === 'wald' ? 'Waldkita (Ü3, 20 Kinder)' : 'Hauskita / Nest (U3, 12 Kinder)'}
                 </div>
                 <div>
-                  <span className="font-medium">Komfortgrenze:</span>{' '}
-                  ≥{FK_KOMFORT_MIN[kita]} FK im Einsatz → A (kein Krank) oder B (mit Krank)
-                </div>
-                <div>
-                  <span className="font-medium">Gesetzl. Minimum:</span>{' '}
-                  ≥{FK_GESETZ_MIN[kita]} FK → D (Minimalbetrieb, gilt als Normalbetrieb)
+                  <span className="font-medium">Gesetzliches Minimum:</span>{' '}
+                  ≥{FK_GESETZ_MIN[kita]} Fachkräfte im Einsatz → A (Normalbetrieb, kein Krank)
                 </div>
                 <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-200 mt-1">
                   §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12) ·{' '}
                   {kita === 'wald'
-                    ? '20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK'
-                    : '12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 FK'}
-                  {' '}· Kinderzahl verifiziert aus Betreuungsübersicht 2025-26 (Nextcloud)
+                    ? '20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 Fachkräfte'
+                    : '12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 Fachkräfte'}
                 </div>
                 <div className="text-[10px] text-gray-400">
-                  Kalenderfeld: FK im Einsatz / Minimum (z.B. «2/2» = 2 FK, Minimum 2) · Klick auf Tag für Details
+                  Personalkategorien: Fachkraft (Stammpersonal mit Päd.-Qualifikation), Fachkraftersatz (extern, z.B. Svea/Anne), Nicht-Fachkraft (Hilfskraft / Freiwillige / externe Hilfe).
+                </div>
+                <div className="text-[10px] text-gray-400">
+                  Kalenderfeld: Fachkräfte im Einsatz / Minimum (z.B. «2/2») · Klick auf Tag für Details.
                 </div>
               </div>
             </div>

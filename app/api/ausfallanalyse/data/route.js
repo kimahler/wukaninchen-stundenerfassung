@@ -47,7 +47,7 @@ export async function GET() {
         if (!tage[ann.datum][k]) continue;
         if (ann.zustand)                       tage[ann.datum][k].zustand     = ann.zustand;
         if (ann.kommentar)                     tage[ann.datum][k].begruendung = ann.kommentar;
-        if (ann.spaetbetreuung_ausgefallen && k === 'wald') {
+        if (ann.spaetbetreuung_ausgefallen && k === 'haus') {
           tage[ann.datum][k].spaetbetreuung_ausgefallen = true;
         }
         tage[ann.datum][k].verifiziert = true;
