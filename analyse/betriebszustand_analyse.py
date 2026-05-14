@@ -75,6 +75,21 @@ NICHT_FACHKRAEFTE = NICHT_FACHKRAEFTE_INTERN | FREIWILLIGE | NICHT_FACHKRAEFTE_E
 # Verwaltung — wird im Dashboard NICHT angezeigt (irrelevant für Betreuung)
 VERWALTUNG = {'Almuth'}
 
+# Primärer Einsatzbereich der Vertretungskräfte (laut Vertretungspool-Kontaktdaten)
+# 'wald' = nur Wald, 'haus' = nur Haus, 'beide' = beide Kitas (kann variieren)
+VERTRETUNG_PRIMAERE_KITA = {
+    'Svea': 'wald',          # "eher Wald"
+    'Anne': 'wald',          # "Wald"
+    'Sabine': 'beide',       # "Nest & Wald, flexibel"
+    'Charlene': 'beide',     # "Nest & Wald"
+    'Jana': 'beide',         # "Nest & Wald"
+    'Mariella': 'beide',     # "Nest & Wald" (aktuell nicht im Einsatz)
+    'Liu': 'haus',           # "Nest"
+    'Liu Ness': 'haus',      # "Nest"
+    'Nina': 'haus',          # "Nest"
+    'Bianca': 'haus',        # "Nest" (aktuell nicht im Einsatz)
+}
+
 # Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
 # Kinderzahlen verifiziert aus ÜbersichtKinderdaten.ods (Nextcloud, Sheet 2025-26)
 # Wald (Ü3, 20 Kinder): 20 ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK
@@ -511,18 +526,20 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
         fkers_haus  = list(info['haus']['fkers_da'])
         nfk_haus    = list(info['haus']['nfk_da'])
 
-        # Vertretungspool 2026 ergänzen — Kita unbekannt, daher beiden zuordnen
+        # Vertretungspool 2026 ergänzen — gemäß primärer Kita aus Kontaktdaten
         if aktuell in pool_2026:
             pool = pool_2026[aktuell]
             for p in pool.get('fkers', []):
-                if p not in fkers_wald:
+                ziel = VERTRETUNG_PRIMAERE_KITA.get(p, 'beide')
+                if ziel in ('wald', 'beide') and p not in fkers_wald:
                     fkers_wald.append(p)
-                if p not in fkers_haus:
+                if ziel in ('haus', 'beide') and p not in fkers_haus:
                     fkers_haus.append(p)
             for p in pool.get('nfk', []):
-                if p not in nfk_wald:
+                ziel = VERTRETUNG_PRIMAERE_KITA.get(p, 'beide')
+                if ziel in ('wald', 'beide') and p not in nfk_wald:
                     nfk_wald.append(p)
-                if p not in nfk_haus:
+                if ziel in ('haus', 'beide') and p not in nfk_haus:
                     nfk_haus.append(p)
 
         # Waldkita klassifizieren

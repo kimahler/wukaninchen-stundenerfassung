@@ -426,7 +426,7 @@ export default function AusfallanalysePage() {
                   },
                   {
                     z: 'C',
-                    desc: 'Qualifizierter Fachkraftersatz (Svea, Anne) im Einsatz.',
+                    desc: 'Qualifizierter externer Fachkraftersatz im Einsatz.',
                     quelle: 'Auto',
                   },
                   {
