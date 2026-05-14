@@ -97,10 +97,21 @@ VERWALTUNG = {'Almuth'}
 # Vertretungspool-Einsätze finden operativ immer in der Waldkita statt
 # (bestätigt durch Geschäftsführung — keine Daten-basierte Kita-Zuordnung nötig)
 
-# Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
-# Kinderzahlen verifiziert aus ÜbersichtKinderdaten.ods (Nextcloud, Sheet 2025-26)
-# Wald (Ü3, 20 Kinder): 20 ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 FK
-# Haus (U3, 12 Kinder): 12 ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 FK
+# Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg
+# Quelle: https://bravors.brandenburg.de/gesetze/kitag (BRAVORS, abgerufen 2026-05-14)
+#
+# §10 Abs. 1 (verkürzt zitiert):
+#   "Bemessungsgröße für die pädagogische Arbeit im Rahmen der Mindestbetreuungszeit
+#    gemäß § 1 Absatz 3 Satz 1 ist:
+#      0,8 Stellen pro 4,25 Kinder unter 3 Jahren,
+#      0,8 Stellen pro 10 Kinder vom 3. Lebensjahr bis zur Einschulung [...]"
+#
+# Wukaninchen öffnet 8:30–14:30 = 6h = Mindestbetreuungszeit nach §1 Abs. 3 Satz 1
+# → der 0,8-Faktor gilt (NICHT der höhere 1,0-Faktor der verlängerten Betreuung)
+#
+# Kinderzahlen aus amtl. Statistik Stichtag 1.3.2026 (20260507_Statistik_Kita.pdf):
+#   Wald: 20 Ü3-Kinder → 20 ÷ 10 × 0,8 = 1,60 VZE → operativ ≥ 2 FK gleichzeitig
+#   Haus: 12 U3-Kinder → 12 ÷ 4,25 × 0,8 = 2,26 VZE → operativ ≥ 3 FK gleichzeitig
 FK_GESETZ_MIN_WALD = 2
 FK_GESETZ_MIN_HAUS = 3
 

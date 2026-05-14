@@ -119,7 +119,7 @@ function TagModal({ day, kita, fkMin, onClose }) {
 
         {info?.spaetbetreuung_ausgefallen && !['F', 'P', 'W'].includes(z) && (
           <div className="text-xs text-orange-600 bg-orange-50 rounded-lg p-2 mt-3">
-            Spätbetreuung ausgefallen (Hauskita 16:00–18:00 Uhr)
+            Spätbetreuung ausgefallen (Hauskita 14:30–16:00 Uhr)
           </div>
         )}
       </div>
@@ -511,22 +511,44 @@ export default function AusfallanalysePage() {
               </div>
 
               {/* Schwellenwerte — am Ende der Legende */}
-              <div className="bg-gray-50 rounded-lg p-3 mt-4 text-xs text-gray-600 space-y-1">
+              <div className="bg-gray-50 rounded-lg p-3 mt-4 text-xs text-gray-600 space-y-1.5">
                 <div className="font-semibold text-gray-700 mb-1">
-                  Schwellenwerte — {kita === 'wald' ? 'Waldkita (Ü3, 20 Kinder)' : 'Hauskita / Nest (U3, 12 Kinder)'}
+                  Personalbemessung — {kita === 'wald' ? 'Waldkita (20 Ü3-Kinder)' : 'Hauskita / Nest (12 U3-Kinder)'}
                 </div>
                 <div>
                   <span className="font-medium">Gesetzliches Minimum:</span>{' '}
-                  ≥{FK_GESETZ_MIN[kita]} Fachkräfte im Einsatz → A (Normalbetrieb, kein Krank)
+                  ≥ {FK_GESETZ_MIN[kita]} Fachkräfte gleichzeitig → A (Normalbetrieb)
                 </div>
-                <div className="text-[10px] text-gray-400 pt-1 border-t border-gray-200 mt-1">
-                  §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12) ·{' '}
-                  {kita === 'wald'
-                    ? '20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Min. 2 Fachkräfte'
-                    : '12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 Fachkräfte'}
+
+                <div className="text-[10px] text-gray-500 pt-2 border-t border-gray-200 mt-2 space-y-1">
+                  <div className="font-medium text-gray-600">Herleitung (§10 Abs. 1 KitaG Brandenburg)</div>
+                  <div>
+                    Wukaninchen öffnet 8:30–14:30 (6h) = Mindestbetreuung nach §1 Abs. 3 Satz 1.
+                    Bemessungsgröße: <em>„0,8 Stellen einer pädagogischen Fachkraft für jeweils {kita === 'wald' ? 'zehn Kinder' : '4,25 Kinder im Alter bis zur Vollendung des dritten Lebensjahres'}"</em>
+                  </div>
+                  <div>
+                    {kita === 'wald'
+                      ? <>Berechnung: 20 ÷ 10 × 0,8 = <strong>1,60 VZE</strong> → operativ ≥ 2 Fachkräfte gleichzeitig.</>
+                      : <>Berechnung: 12 ÷ 4,25 × 0,8 = <strong>2,26 VZE</strong> → operativ ≥ 3 Fachkräfte gleichzeitig.</>
+                    }
+                  </div>
+                  <div>
+                    Quelle:{' '}
+                    <a
+                      href="https://bravors.brandenburg.de/gesetze/kitag"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="text-blue-500 hover:text-blue-700 underline"
+                    >
+                      bravors.brandenburg.de/gesetze/kitag
+                    </a>
+                  </div>
                 </div>
-                <div className="text-[10px] text-gray-400">
-                  Personalkategorien: Fachkraft (pädagogisch qualifiziertes Stammpersonal), Fachkraft-Ersatz (qualifiziert extern), Nicht-Fachkraft (Hilfskraft / Freiwillige / externe Hilfe).
+
+                <div className="text-[10px] text-gray-400 pt-2 border-t border-gray-200 mt-2">
+                  Personalkategorien: <strong>Fachkraft</strong> (pädagogisch qualifiziertes Stammpersonal),
+                  {' '}<strong>Fachkraft-Ersatz</strong> (qualifiziert extern),
+                  {' '}<strong>Nicht-Fachkraft</strong> (Hilfskraft / Freiwillige / externe Hilfe).
                 </div>
                 <div className="text-[10px] text-gray-400">
                   Kalenderfeld: Fachkräfte im Einsatz / Minimum (z.B. «2/2») · Klick auf Tag für Details.
