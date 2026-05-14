@@ -503,7 +503,7 @@ export default function AusfallanalysePage() {
                         <span className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-red-50 text-red-500">Signal</span>
                       </div>
                       <div className="text-xs text-gray-500">
-                        Geplante Spätbetreuung Hauskita (16:00–18:00 Uhr) ausgefallen. Nur Hauskita relevant.
+                        Geplante Spätbetreuung Hauskita (14:30–16:00 Uhr) ausgefallen. Nur Hauskita relevant.
                       </div>
                     </div>
                   </div>
@@ -528,8 +528,8 @@ export default function AusfallanalysePage() {
                   </div>
                   <div>
                     {kita === 'wald'
-                      ? <>Berechnung: 20 ÷ 10 × 0,8 = <strong>1,60 VZE</strong> → operativ ≥ 2 Fachkräfte gleichzeitig.</>
-                      : <>Berechnung: 12 ÷ 4,25 × 0,8 = <strong>2,26 VZE</strong> → operativ ≥ 3 Fachkräfte gleichzeitig.</>
+                      ? <>Berechnung: 20 ÷ 10 × 0,8 = <strong>1,60 Stellen</strong> → operativ ≥ 2 Fachkräfte gleichzeitig.</>
+                      : <>Berechnung: 12 ÷ 4,25 × 0,8 = <strong>2,26 Stellen</strong> → operativ ≥ 3 Fachkräfte gleichzeitig.</>
                     }
                   </div>
                   <div>

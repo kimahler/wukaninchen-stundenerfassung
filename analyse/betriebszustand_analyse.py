@@ -36,7 +36,7 @@ Fachkräften und Fachkraft-Ersatz.
 
 Personalkategorien (3 Stufen):
   1. Fachkraft (Stammpersonal mit pädagogischer Qualifikation)
-  2. Fachkraftersatz (extern qualifiziert — Svea, Anne)
+  2. Fachkraft-Ersatz (extern qualifiziert — Svea, Anne)
   3. Nicht-Fachkraft (Hilfskraft Stammpersonal + Freiwillige + externe Hilfskräfte)
 
 Datenquellen:
@@ -78,7 +78,7 @@ FACHKRAEFTE_WALD = {'Edu', 'Juli', 'Ilai'}            # Ilai in Ausbildung — z
 FACHKRAEFTE_HAUS = {'Catharina', 'Berit', 'Alina'}    # Alina = Sozialassistentin (EK), zählt mit
 FACHKRAEFTE = FACHKRAEFTE_WALD | FACHKRAEFTE_HAUS
 
-# 2. Fachkraftersatz (extern qualifiziert — kann FK-Ausfall kompensieren → Zustand C)
+# 2. Fachkraft-Ersatz (extern qualifiziert — kann FK-Ausfall kompensieren → Zustand C)
 FACHKRAFTERSATZ_EXTERN = {'Svea', 'Anne'}
 
 # 3. Nicht-Fachkraft (Hilfskraft Stammpersonal + Freiwillige + externe Hilfskräfte)
@@ -110,8 +110,8 @@ VERWALTUNG = {'Almuth'}
 # → der 0,8-Faktor gilt (NICHT der höhere 1,0-Faktor der verlängerten Betreuung)
 #
 # Kinderzahlen aus amtl. Statistik Stichtag 1.3.2026 (20260507_Statistik_Kita.pdf):
-#   Wald: 20 Ü3-Kinder → 20 ÷ 10 × 0,8 = 1,60 VZE → operativ ≥ 2 FK gleichzeitig
-#   Haus: 12 U3-Kinder → 12 ÷ 4,25 × 0,8 = 2,26 VZE → operativ ≥ 3 FK gleichzeitig
+#   Wald: 20 Ü3-Kinder → 20 ÷ 10 × 0,8 = 1,60 Stellen → operativ ≥ 2 FK gleichzeitig
+#   Haus: 12 U3-Kinder → 12 ÷ 4,25 × 0,8 = 2,26 Stellen → operativ ≥ 3 FK gleichzeitig
 FK_GESETZ_MIN_WALD = 2
 FK_GESETZ_MIN_HAUS = 3
 
@@ -121,7 +121,7 @@ KEIN_SPAET_WOCHENTAGE = {2, 4}
 ZUSTAND_FARBEN = {
     'A': '#27ae60',  # grün
     'B': '#a8d8a8',  # hellgrün
-    'C': '#f39c12',  # gelb-orange (Externe Vertretung)
+    'C': '#f39c12',  # gelb-orange (Fachkraft-Ersatz)
     'D': '#fd79a8',  # rosa (Kinderzahlbegrenzung, Signal)
     'E': '#e74c3c',  # rot (Notbetreuung, Signal)
     'F': '#7b241c',  # dunkelrot (Vollschließung, Signal)
@@ -306,7 +306,7 @@ def analyse_dienstplaene():
       'wald': {
         'fk_da': [...],          # Fachkräfte Stammpersonal anwesend
         'krank': [...],          # Fachkräfte krank
-        'fkers_da': [...],       # Fachkraftersatz extern anwesend
+        'fkers_da': [...],       # Fachkraft-Ersatz extern anwesend
         'nfk_da': [...],         # Nicht-Fachkräfte anwesend (Hilfskraft + Freiwillige + ext. Hilfe)
       },
       'haus': {...gleich wie wald...},
@@ -366,7 +366,7 @@ def analyse_dienstplaene():
                             fk_wald.append(name)
                         elif name in FACHKRAEFTE_HAUS and ist_haus:
                             fk_haus.append(name)
-                        # 2. Fachkraftersatz (extern, qualifiziert)
+                        # 2. Fachkraft-Ersatz (extern, qualifiziert)
                         elif name in FACHKRAFTERSATZ_EXTERN:
                             if ist_wald:
                                 fkers_wald.append(name)
@@ -411,7 +411,7 @@ def analyse_dienstplaene():
 def analyse_vertretungspool_2026():
     """Gibt zurück: {date → {'fkers': [...], 'nfk': [...]}}.
 
-    Trennt qualifizierte Vertretung (Svea/Anne) von Hilfskräften (Charlene/Jana/...).
+    Trennt Fachkraft-Ersatz (Svea/Anne) von Nicht-Fachkräften (Charlene/Jana/...).
     """
     fp = os.path.join(ODS_DIR, 'vertretungspool.ods')
     if not os.path.exists(fp):
