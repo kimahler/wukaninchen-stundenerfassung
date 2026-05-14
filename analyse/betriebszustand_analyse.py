@@ -5,15 +5,34 @@ Betriebszustands-Analyse Wukaninchen Kita
 Klassifiziert jeden Arbeitstag von Jan 2025 – Mai 2026 getrennt für
 Waldkita (Ü3) und Hauskita/Nest (U3) in einen von 6 Zuständen (A–F) + P/W.
 
+Personalkategorien:
+  Fachkraft         – pädagogische Fachkraft im Stammpersonal
+                      Wald: Edu, Juli, Ilai  |  Haus: Catharina, Berit, Alina
+  Fachkraft-Ersatz  – qualifizierter externer Ersatz (Wald)
+                      Svea, Anne
+  Nicht-Fachkraft   – Hilfskräfte, Freiwillige, Praktikant:innen
+
 Zustandsmodell (beide Kitas, unabhängig klassifiziert):
-  A = Normalbetrieb        – Fachkräfte ≥ gesetzliches Minimum, keine Krankmeldungen
-  B = Intern kompensiert   – Krankmeldungen, aber FK-Zahl reicht (oder Stammpersonal-Engpass)
-  C = Fachkraftersatz      – qualifizierter externer Fachkraftersatz im Einsatz (Waldkita)
+  A = Normalbetrieb        – Fachkräfte ≥ gesetzliches Minimum
+  B = Unterbesetzung       – Fachkraft + Fachkraft-Ersatz < Minimum
+  C = Fachkraft-Ersatz     – Fachkraft < Min, aber Fachkraft + Ersatz ≥ Min
   D = Kinderzahlbegrenzung – Eltern gebeten, Kinder zu Hause zu lassen (Signal-Annotation)
   E = Notbetreuung         – formale Notbetreuung (Signal-Annotation)
   F = Vollschließung       – Kita vollständig geschlossen (Signal-Annotation)
   P = Geplant geschlossen  – Betriebsferien, Klausurtage (statisch)
   W = Wochenende/Feiertag  – statisch
+
+Klassifikationsreihenfolge (auto):
+  1. W (Wochenende/Feiertag) und P (Schließzeit) → statisch
+  2. Signal-Annotation D/E/F → überschreibt alles
+  3. niemand da (FK=0 UND FK-Ersatz=0) → ?
+  4. FK ≥ Min → A (egal ob FK-Ersatz da; Ersatz = Verstärkung)
+  5. FK < Min UND FK + FK-Ersatz ≥ Min → C (durch FK-Ersatz kompensiert)
+  6. sonst → B (Unterbesetzung)
+
+Krankmeldungen werden nicht separat klassifiziert — wer krank ist, zählt nicht
+als anwesend. Die Klassifikation richtet sich nur nach tatsächlich anwesenden
+Fachkräften und Fachkraft-Ersatz.
 
 Personalkategorien (3 Stufen):
   1. Fachkraft (Stammpersonal mit pädagogischer Qualifikation)
@@ -102,8 +121,8 @@ ZUSTAND_FARBEN = {
 
 ZUSTAND_NAMEN = {
     'A': 'Normalbetrieb',
-    'B': 'Intern kompensiert',
-    'C': 'Fachkraftersatz',
+    'B': 'Unterbesetzung',
+    'C': 'Fachkraft-Ersatz',
     'D': 'Kinderzahlbegrenzung',  # Signal-Annotation
     'E': 'Notbetreuung',           # Signal-Annotation
     'F': 'Vollschließung',          # Signal-Annotation
@@ -430,40 +449,29 @@ def analyse_vertretungspool_2026():
 
 def klassifiziere_kita(fk_da, krank, fkers_da, fk_gesetz_min):
     """
-    Klassifiziert eine einzelne Kita für einen Tag (Auto-Klassifikation A/B/C).
+    Klassifiziert eine einzelne Kita für einen Tag (Auto-Klassifikation A/B/C/?).
 
     Signal-Zustände D/E/F überschreiben dies via Annotationen.
 
-    Logik:
-      - C: qualifizierter Fachkraftersatz (Svea/Anne) im Einsatz
-      - A: ≥ gesetzliches Minimum FK, keine Krankmeldungen
-      - B: alles andere (Krankmeldung oder unter Minimum, kein Signal)
-      - ?: keine Daten
+    Logik (in dieser Reihenfolge geprüft):
+      ?: FK = 0 UND FK-Ersatz = 0           → keine Daten
+      A: FK ≥ Minimum                       → Normalbetrieb (Ersatz egal)
+      C: FK + FK-Ersatz ≥ Min, FK-Ersatz>0 → durch FK-Ersatz kompensiert
+      B: sonst                              → Unterbesetzung
     """
     n_fk    = len(fk_da)
-    n_krank = len(krank)
     n_fkers = len(fkers_da)
 
-    # C — Qualifizierter externer Fachkraftersatz im Einsatz
-    if n_fkers > 0:
-        return 'C', f'Fachkraftersatz: {n_fkers} qualifizierte externe Kraft im Einsatz ({n_fk} Fachkraft/Fachkräfte Stammpersonal)'
+    if n_fk == 0 and n_fkers == 0:
+        return '?', 'Keine Fachkraft und kein Fachkraft-Ersatz im Dienstplan'
 
-    # Keine Daten
-    if n_fk == 0 and n_krank == 0:
-        return '?', 'Keine Daten im Dienstplan'
+    if n_fk >= fk_gesetz_min:
+        return 'A', f'{n_fk} Fachkraft/Fachkräfte im Einsatz (Minimum: {fk_gesetz_min})'
 
-    # A — Normalbetrieb (≥ gesetzliches Minimum, keine Krankmeldung)
-    if n_krank == 0 and n_fk >= fk_gesetz_min:
-        return 'A', f'Normalbetrieb: {n_fk} Fachkraft/Fachkräfte im Einsatz'
+    if n_fkers > 0 and (n_fk + n_fkers) >= fk_gesetz_min:
+        return 'C', f'{n_fk} Fachkraft + {n_fkers} Fachkraft-Ersatz im Einsatz (Minimum: {fk_gesetz_min})'
 
-    # B — Intern kompensiert (Krankmeldung oder unter Minimum, kein Signal)
-    if n_fk > 0:
-        if n_krank > 0:
-            return 'B', f'Intern kompensiert: {n_fk} Fachkraft/Fachkräfte trotz {n_krank} Krankmeldung(en)'
-        return 'B', f'Unterbesetzt ohne Signal: {n_fk} Fachkraft/Fachkräfte (Minimum: {fk_gesetz_min})'
-
-    # 0 FK aber Krankmeldungen → Status unklar
-    return '?', f'0 Fachkräfte im Dienstplan ({n_krank} Krankmeldung(en)) — kein Signal'
+    return 'B', f'Unterbesetzung: {n_fk} Fachkraft + {n_fkers} Fachkraft-Ersatz (Minimum: {fk_gesetz_min})'
 
 
 def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):

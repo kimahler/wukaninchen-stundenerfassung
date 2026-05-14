@@ -8,7 +8,7 @@ const FARBEN = {
   P: '#b2bec3', W: '#dfe6e9', '?': '#95a5a6',
 };
 const NAMEN = {
-  A: 'Normalbetrieb', B: 'Intern kompensiert', C: 'Fachkraftersatz',
+  A: 'Normalbetrieb', B: 'Unterbesetzung', C: 'Fachkraft-Ersatz',
   D: 'Kinderzahlbegrenzung', E: 'Notbetreuung', F: 'Vollschließung',
   P: 'Geplant geschlossen', W: 'Feiertag', '?': 'Daten fehlen',
 };
@@ -99,7 +99,7 @@ function TagModal({ day, kita, fkMin, onClose }) {
 
             {fkErsatzNamen.length > 0 && (
               <div>
-                <div className="text-[10px] uppercase tracking-wide text-amber-500 mb-0.5">Fachkraftersatz (extern)</div>
+                <div className="text-[10px] uppercase tracking-wide text-amber-500 mb-0.5">Fachkraft-Ersatz</div>
                 <div className="text-[11px] text-gray-600">{fkErsatzNamen.join(', ')}</div>
               </div>
             )}
@@ -194,8 +194,8 @@ function SummaryKarten({ tage }) {
   const total = Object.values(counts).reduce((a, b) => a + b, 0);
   const karten = [
     { z: 'A', label: 'Normalbetrieb' },
-    { z: 'B', label: 'Intern komp.' },
-    { z: 'C', label: 'Fachkraftersatz' },
+    { z: 'B', label: 'Unterbesetzung' },
+    { z: 'C', label: 'Fachkraft-Ersatz' },
     { z: 'D', label: 'Kinderzahl-Begr.' },
     { z: 'E', label: 'Notbetreuung' },
     { z: 'F', label: 'Vollschließung' },
@@ -416,17 +416,17 @@ export default function AusfallanalysePage() {
                 {[
                   {
                     z: 'A',
-                    desc: `≥${FK_GESETZ_MIN[kita]} Fachkräfte im Einsatz, keine Krankmeldung.`,
+                    desc: `Fachkräfte ≥ gesetzliches Minimum (${FK_GESETZ_MIN[kita]}) im Einsatz.`,
                     quelle: 'Auto',
                   },
                   {
                     z: 'B',
-                    desc: 'Krankmeldungen vorhanden oder unter gesetzlichem Minimum — intern kompensiert ohne Signal.',
+                    desc: `Fachkraft + Fachkraft-Ersatz < gesetzliches Minimum (${FK_GESETZ_MIN[kita]}).`,
                     quelle: 'Auto',
                   },
                   {
                     z: 'C',
-                    desc: 'Qualifizierter externer Fachkraftersatz im Einsatz (operativ immer Waldkita).',
+                    desc: `Fachkraft < Minimum, aber durch Fachkraft-Ersatz auf ≥ ${FK_GESETZ_MIN[kita]} kompensiert.`,
                     quelle: 'Auto',
                   },
                   {
@@ -526,7 +526,7 @@ export default function AusfallanalysePage() {
                     : '12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Min. 3 Fachkräfte'}
                 </div>
                 <div className="text-[10px] text-gray-400">
-                  Personalkategorien: Fachkraft (Stammpersonal mit Päd.-Qualifikation), Fachkraftersatz (extern, z.B. Svea/Anne), Nicht-Fachkraft (Hilfskraft / Freiwillige / externe Hilfe).
+                  Personalkategorien: Fachkraft (pädagogisch qualifiziertes Stammpersonal), Fachkraft-Ersatz (qualifiziert extern), Nicht-Fachkraft (Hilfskraft / Freiwillige / externe Hilfe).
                 </div>
                 <div className="text-[10px] text-gray-400">
                   Kalenderfeld: Fachkräfte im Einsatz / Minimum (z.B. «2/2») · Klick auf Tag für Details.
