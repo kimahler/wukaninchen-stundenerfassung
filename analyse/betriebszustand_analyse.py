@@ -97,23 +97,26 @@ VERWALTUNG = {'Almuth'}
 # Vertretungspool-Einsätze finden operativ immer in der Waldkita statt
 # (bestätigt durch Geschäftsführung — keine Daten-basierte Kita-Zuordnung nötig)
 
-# Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg
-# Quelle: https://bravors.brandenburg.de/gesetze/kitag (BRAVORS, abgerufen 2026-05-14)
+# Operative Mindestbesetzung (Anzahl Fachkräfte gleichzeitig anwesend)
 #
-# §10 Abs. 1 (verkürzt zitiert):
-#   "Bemessungsgröße für die pädagogische Arbeit im Rahmen der Mindestbetreuungszeit
-#    gemäß § 1 Absatz 3 Satz 1 ist:
-#      0,8 Stellen pro 4,25 Kinder unter 3 Jahren,
-#      0,8 Stellen pro 10 Kinder vom 3. Lebensjahr bis zur Einschulung [...]"
+# Quellen:
+# - §10 Abs. 1 KitaG Brandenburg: https://bravors.brandenburg.de/gesetze/kitag
+#   "0,8 Stellen pro 4,25 U3-Kinder, 0,8 Stellen pro 10 Ü3-Kinder" (Mindestbetreuung 6h)
+# - WuKaNews 2026 (Jan-März): fester Dienstplan zeigt operativ 2 FK/Tag pro Kita
+# - Wukaninchen-Öffnungszeit: 8:30–14:30 = 6h Mindestbetreuung
 #
-# Wukaninchen öffnet 8:30–14:30 = 6h = Mindestbetreuungszeit nach §1 Abs. 3 Satz 1
-# → der 0,8-Faktor gilt (NICHT der höhere 1,0-Faktor der verlängerten Betreuung)
+# Theoretische §10-Berechnung:
+#   Wald: 20 ÷ 10 × 0,8 = 1,60 Stellen → 2 FK gleichzeitig
+#   Haus: 12 ÷ 4,25 × 0,8 = 2,26 Stellen → 3 FK gleichzeitig (theoretisch)
 #
-# Kinderzahlen aus amtl. Statistik Stichtag 1.3.2026 (20260507_Statistik_Kita.pdf):
-#   Wald: 20 Ü3-Kinder → 20 ÷ 10 × 0,8 = 1,60 Stellen → operativ ≥ 2 FK gleichzeitig
-#   Haus: 12 U3-Kinder → 12 ÷ 4,25 × 0,8 = 2,26 Stellen → operativ ≥ 3 FK gleichzeitig
+# Operative Realität (laut WuKaNews fester Dienstplan):
+#   Wald: 2 FK/Tag (z.B. Mo Ilai+Juli, Di Edu+Ilai, ...)
+#   Haus: 2 FK/Tag (z.B. Mo Berit+Alina, Di Cath+Alina, ...)
+#
+# Entscheidung: Dashboard reflektiert operative Realität → Haus auch 2 FK/Tag.
+# Spätbetreuung/gestaffelte Stunden gleichen das §10-Soll vermutlich aus.
 FK_GESETZ_MIN_WALD = 2
-FK_GESETZ_MIN_HAUS = 3
+FK_GESETZ_MIN_HAUS = 2
 
 # Mi (2) und Fr (4) haben strukturell keine Spätbetreuung → nie flaggen
 KEIN_SPAET_WOCHENTAGE = {2, 4}
@@ -191,6 +194,22 @@ SCHLIESSZEITEN = {
     date(2026, 2, 6):  'Klausurtage Februar 2026',
     # Brückentag nach Christi Himmelfahrt
     date(2026, 5, 15): 'Brückentag (Christi Himmelfahrt)',
+    # Sommerschließzeit 2026: 03.08.–21.08.2026 (laut WuKaNews Nr. 2/2026)
+    date(2026, 8, 3):  'Sommerschließzeit 2026',
+    date(2026, 8, 4):  'Sommerschließzeit 2026',
+    date(2026, 8, 5):  'Sommerschließzeit 2026',
+    date(2026, 8, 6):  'Sommerschließzeit 2026',
+    date(2026, 8, 7):  'Sommerschließzeit 2026',
+    date(2026, 8, 10): 'Sommerschließzeit 2026',
+    date(2026, 8, 11): 'Sommerschließzeit 2026',
+    date(2026, 8, 12): 'Sommerschließzeit 2026',
+    date(2026, 8, 13): 'Sommerschließzeit 2026',
+    date(2026, 8, 14): 'Sommerschließzeit 2026',
+    date(2026, 8, 17): 'Sommerschließzeit 2026',
+    date(2026, 8, 18): 'Sommerschließzeit 2026',
+    date(2026, 8, 19): 'Sommerschließzeit 2026',
+    date(2026, 8, 20): 'Sommerschließzeit 2026',
+    date(2026, 8, 21): 'Sommerschließzeit 2026',
 }
 
 NS = {
@@ -355,17 +374,20 @@ def analyse_dienstplaene():
                     status = t.get('status', 'frei')
 
                     if status == 'work':
-                        # Sektion-basierte Zuordnung
+                        # Sektion-basierte Zuordnung (Dienstplan-Sektion bestimmt Kita)
+                        # FK-Stammliste ist NICHT kita-spezifisch — Edu (Wald) kann z.B.
+                        # donnerstags im Nest aushelfen und zählt dann dort als FK.
                         ist_wald = (gruppe == 'Ü3')
                         ist_haus = (gruppe == 'Nest')
                         if not (ist_wald or ist_haus):
                             continue  # 'Weiteres'-Sektion ignorieren
 
-                        # 1. Fachkraft Stammpersonal
-                        if name in FACHKRAEFTE_WALD and ist_wald:
-                            fk_wald.append(name)
-                        elif name in FACHKRAEFTE_HAUS and ist_haus:
-                            fk_haus.append(name)
+                        # 1. Fachkraft (egal aus welcher Stammgruppe — Sektion entscheidet)
+                        if name in FACHKRAEFTE:
+                            if ist_wald:
+                                fk_wald.append(name)
+                            else:
+                                fk_haus.append(name)
                         # 2. Fachkraft-Ersatz (extern, qualifiziert)
                         elif name in FACHKRAFTERSATZ_EXTERN:
                             if ist_wald:
@@ -378,15 +400,15 @@ def analyse_dienstplaene():
                                 nfk_wald.append(name)
                             else:
                                 nfk_haus.append(name)
-                        # Verwaltung (Almuth) wird ignoriert
-                        # Unbekannte Namen werden ebenfalls ignoriert
+                        # Verwaltung (Almuth) und unbekannte Namen werden ignoriert
 
                     elif status == 'K':
-                        # Krankmeldung — nur Fachkräfte zählen
-                        if name in FACHKRAEFTE_WALD and gruppe == 'Ü3':
-                            krank_wald.append(name)
-                        elif name in FACHKRAEFTE_HAUS and gruppe == 'Nest':
-                            krank_haus.append(name)
+                        # Krankmeldung — nur Fachkräfte zählen (Sektion-basiert)
+                        if name in FACHKRAEFTE:
+                            if gruppe == 'Ü3':
+                                krank_wald.append(name)
+                            elif gruppe == 'Nest':
+                                krank_haus.append(name)
 
                 tage_info[arbeitstag] = {
                     'wald': {

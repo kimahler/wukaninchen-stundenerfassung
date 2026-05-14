@@ -17,10 +17,10 @@ const MONAT_LANG = [
   'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
 ];
 const MONAT_KURZ = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-// Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
-// Wald Ü3: 20 Kinder ÷ 10 Kinder/Stelle = 2,0 Stellen → Minimum 2 Fachkräfte
-// Haus U3: 12 Kinder ÷ 4,25 Kinder/Stelle = 2,82 Stellen → Minimum 3 Fachkräfte
-const FK_GESETZ_MIN = { wald: 2, haus: 3 };
+// Operative Mindestbesetzung (Fachkräfte gleichzeitig anwesend)
+// Quelle: WuKaNews 2026 fester Dienstplan + §10 KitaG Brandenburg
+// Beide Kitas operativ 2 FK/Tag gefahren (laut WuKaNews-Dienstplan-Übersichten).
+const FK_GESETZ_MIN = { wald: 2, haus: 2 };
 const WDAY_DE = ['So', 'Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa'];
 
 function fmt(year, month, day) {
@@ -521,19 +521,23 @@ export default function AusfallanalysePage() {
                 </div>
 
                 <div className="text-[10px] text-gray-500 pt-2 border-t border-gray-200 mt-2 space-y-1">
-                  <div className="font-medium text-gray-600">Herleitung (§10 Abs. 1 KitaG Brandenburg)</div>
+                  <div className="font-medium text-gray-600">Herleitung</div>
                   <div>
-                    Wukaninchen öffnet 8:30–14:30 (6h) = Mindestbetreuung nach §1 Abs. 3 Satz 1.
-                    Bemessungsgröße: <em>„0,8 Stellen einer pädagogischen Fachkraft für jeweils {kita === 'wald' ? 'zehn Kinder' : '4,25 Kinder im Alter bis zur Vollendung des dritten Lebensjahres'}"</em>
-                  </div>
-                  <div>
+                    Operative Mindestbesetzung gemäß festem Dienstplan (WuKaNews 2026):
                     {kita === 'wald'
-                      ? <>Berechnung: 20 ÷ 10 × 0,8 = <strong>1,60 Stellen</strong> → operativ ≥ 2 Fachkräfte gleichzeitig.</>
-                      : <>Berechnung: 12 ÷ 4,25 × 0,8 = <strong>2,26 Stellen</strong> → operativ ≥ 3 Fachkräfte gleichzeitig.</>
+                      ? <> Waldkita typischerweise 2 Fachkräfte/Tag (z.B. Mo Ilai+Juli, Di Edu+Ilai).</>
+                      : <> Hauskita typischerweise 2 Fachkräfte/Tag (z.B. Mo Berit+Alina, Di Catharina+Alina).</>
                     }
                   </div>
                   <div>
-                    Quelle:{' '}
+                    Zum Vergleich §10 Abs. 1 KitaG Brandenburg (Mindestbetreuung 6h, 0,8-Faktor):
+                    {kita === 'wald'
+                      ? <> 20 ÷ 10 × 0,8 = <strong>1,60 Stellen</strong> (entspricht 2 FK).</>
+                      : <> 12 ÷ 4,25 × 0,8 = <strong>2,26 Stellen</strong> (theoretisch 3 FK; gestaffelte Stunden + Spätbetreuung gleichen das Soll aus).</>
+                    }
+                  </div>
+                  <div>
+                    KitaG-Quelle:{' '}
                     <a
                       href="https://bravors.brandenburg.de/gesetze/kitag"
                       target="_blank"
