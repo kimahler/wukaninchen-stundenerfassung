@@ -8,7 +8,7 @@ Waldkita (Ü3) und Hauskita/Nest (U3) in einen von 6 Zuständen (A–F) + P/W.
 Zustandsmodell (beide Kitas, unabhängig klassifiziert):
   A = Normalbetrieb        – Fachkräfte ≥ gesetzliches Minimum, keine Krankmeldungen
   B = Intern kompensiert   – Krankmeldungen, aber FK-Zahl reicht (oder Stammpersonal-Engpass)
-  C = Externe Vertretung   – qualifizierter Fachkraftersatz (Svea/Anne) im Einsatz
+  C = Fachkraftersatz      – qualifizierter externer Fachkraftersatz im Einsatz (Waldkita)
   D = Kinderzahlbegrenzung – Eltern gebeten, Kinder zu Hause zu lassen (Signal-Annotation)
   E = Notbetreuung         – formale Notbetreuung (Signal-Annotation)
   F = Vollschließung       – Kita vollständig geschlossen (Signal-Annotation)
@@ -75,20 +75,8 @@ NICHT_FACHKRAEFTE = NICHT_FACHKRAEFTE_INTERN | FREIWILLIGE | NICHT_FACHKRAEFTE_E
 # Verwaltung — wird im Dashboard NICHT angezeigt (irrelevant für Betreuung)
 VERWALTUNG = {'Almuth'}
 
-# Primärer Einsatzbereich der Vertretungskräfte (laut Vertretungspool-Kontaktdaten)
-# 'wald' = nur Wald, 'haus' = nur Haus, 'beide' = beide Kitas (kann variieren)
-VERTRETUNG_PRIMAERE_KITA = {
-    'Svea': 'wald',          # "eher Wald"
-    'Anne': 'wald',          # "Wald"
-    'Sabine': 'beide',       # "Nest & Wald, flexibel"
-    'Charlene': 'beide',     # "Nest & Wald"
-    'Jana': 'beide',         # "Nest & Wald"
-    'Mariella': 'beide',     # "Nest & Wald" (aktuell nicht im Einsatz)
-    'Liu': 'haus',           # "Nest"
-    'Liu Ness': 'haus',      # "Nest"
-    'Nina': 'haus',          # "Nest"
-    'Bianca': 'haus',        # "Nest" (aktuell nicht im Einsatz)
-}
+# Vertretungspool-Einsätze finden operativ immer in der Waldkita statt
+# (bestätigt durch Geschäftsführung — keine Daten-basierte Kita-Zuordnung nötig)
 
 # Schwellenwerte nach §10 Abs. 1 KitaG Brandenburg (GVBl.I/25, Nr. 12)
 # Kinderzahlen verifiziert aus ÜbersichtKinderdaten.ods (Nextcloud, Sheet 2025-26)
@@ -115,7 +103,7 @@ ZUSTAND_FARBEN = {
 ZUSTAND_NAMEN = {
     'A': 'Normalbetrieb',
     'B': 'Intern kompensiert',
-    'C': 'Externe Vertretung',
+    'C': 'Fachkraftersatz',
     'D': 'Kinderzahlbegrenzung',  # Signal-Annotation
     'E': 'Notbetreuung',           # Signal-Annotation
     'F': 'Vollschließung',          # Signal-Annotation
@@ -456,9 +444,9 @@ def klassifiziere_kita(fk_da, krank, fkers_da, fk_gesetz_min):
     n_krank = len(krank)
     n_fkers = len(fkers_da)
 
-    # C — Externer qualifizierter Fachkraftersatz im Einsatz
+    # C — Qualifizierter externer Fachkraftersatz im Einsatz
     if n_fkers > 0:
-        return 'C', f'Externe Vertretung: {n_fkers} qualifizierter Fachkraftersatz im Einsatz ({n_fk} Fachkraft/Fachkräfte Stammpersonal)'
+        return 'C', f'Fachkraftersatz: {n_fkers} qualifizierte externe Kraft im Einsatz ({n_fk} Fachkraft/Fachkräfte Stammpersonal)'
 
     # Keine Daten
     if n_fk == 0 and n_krank == 0:
@@ -526,21 +514,15 @@ def klassifiziere_alle(tage_info, ann_wald, ann_haus, pool_2026):
         fkers_haus  = list(info['haus']['fkers_da'])
         nfk_haus    = list(info['haus']['nfk_da'])
 
-        # Vertretungspool 2026 ergänzen — gemäß primärer Kita aus Kontaktdaten
+        # Vertretungspool 2026 ergänzen — immer Waldkita (operative Realität)
         if aktuell in pool_2026:
             pool = pool_2026[aktuell]
             for p in pool.get('fkers', []):
-                ziel = VERTRETUNG_PRIMAERE_KITA.get(p, 'beide')
-                if ziel in ('wald', 'beide') and p not in fkers_wald:
+                if p not in fkers_wald:
                     fkers_wald.append(p)
-                if ziel in ('haus', 'beide') and p not in fkers_haus:
-                    fkers_haus.append(p)
             for p in pool.get('nfk', []):
-                ziel = VERTRETUNG_PRIMAERE_KITA.get(p, 'beide')
-                if ziel in ('wald', 'beide') and p not in nfk_wald:
+                if p not in nfk_wald:
                     nfk_wald.append(p)
-                if ziel in ('haus', 'beide') and p not in nfk_haus:
-                    nfk_haus.append(p)
 
         # Waldkita klassifizieren
         if aktuell in ann_wald and ann_wald[aktuell].get('zustand'):

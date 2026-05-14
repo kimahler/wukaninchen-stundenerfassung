@@ -16,8 +16,8 @@ jobs:
       NC_PASS: ${{ secrets.NEXTCLOUD_PASS }}
       # Pfad zu den Dienstplänen auf Nextcloud (URL-kodiert)
       DIENSTPLAN_NC_PATH: "03%20Kinderbetreuung/P%C3%A4dagogik/Dienstpl%C3%A4ne"
-      # Pfad zum Vertretungspool (anpassen falls abweichend)
-      VERTRETUNGSPOOL_NC_PATH: "03%20Kinderbetreuung/P%C3%A4dagogik/Dienstpl%C3%A4ne/Vertretungspool.ods"
+      # Pfad zum Vertretungspool (Übersicht in Personal-Ordner)
+      VERTRETUNGSPOOL_NC_PATH: "02%20Personal/Ausbildung%20und%20Freiwillige/%C3%9Cbungsleiter%20Ehrenamt/20250304%20Vertretungspool%20%C3%9Cbersicht.ods"
       # Ausgabe-Ordner auf Nextcloud
       ANALYSE_NC_PATH: "03%20Kinderbetreuung/P%C3%A4dagogik/Ausfallsicherheit"
 

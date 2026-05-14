@@ -8,7 +8,7 @@ const FARBEN = {
   P: '#b2bec3', W: '#dfe6e9', '?': '#95a5a6',
 };
 const NAMEN = {
-  A: 'Normalbetrieb', B: 'Intern kompensiert', C: 'Externe Vertretung',
+  A: 'Normalbetrieb', B: 'Intern kompensiert', C: 'Fachkraftersatz',
   D: 'Kinderzahlbegrenzung', E: 'Notbetreuung', F: 'Vollschließung',
   P: 'Geplant geschlossen', W: 'Feiertag', '?': 'Daten fehlen',
 };
@@ -195,7 +195,7 @@ function SummaryKarten({ tage }) {
   const karten = [
     { z: 'A', label: 'Normalbetrieb' },
     { z: 'B', label: 'Intern komp.' },
-    { z: 'C', label: 'Externe Vertr.' },
+    { z: 'C', label: 'Fachkraftersatz' },
     { z: 'D', label: 'Kinderzahl-Begr.' },
     { z: 'E', label: 'Notbetreuung' },
     { z: 'F', label: 'Vollschließung' },
@@ -426,7 +426,7 @@ export default function AusfallanalysePage() {
                   },
                   {
                     z: 'C',
-                    desc: 'Qualifizierter externer Fachkraftersatz im Einsatz.',
+                    desc: 'Qualifizierter externer Fachkraftersatz im Einsatz (operativ immer Waldkita).',
                     quelle: 'Auto',
                   },
                   {
